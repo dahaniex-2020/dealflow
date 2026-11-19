@@ -1,0 +1,5 @@
+{
+  "run": "cd \"/home/dealflow\" && quarks run",
+  "build": "cd \"/home/dealflow\" && quarks build",
+  "build_release": "cd \"/home/dealflow\" && quarks build --release"
+}
