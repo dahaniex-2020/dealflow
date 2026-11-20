@@ -7,6 +7,7 @@ import { db } from './db/schema';
 
 const Settings = () => {
   const { isProUser, setIsProUser } = useOutletContext();
+  const [userId, setUserId] = useState(null);
 
   const [profile, setProfile] = useState({
     name: "", email: "", businessName: "", logo: "" 
@@ -33,23 +34,45 @@ const Settings = () => {
 
   const [statusMessage, setStatusMessage] = useState({ type: "", text: "" });
 
+  // ==========================================
+  // DATA LOADING LOGIC (Cloud for Pro, Local for Free)
+  // ==========================================
   useEffect(() => {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) return;
+
+    setUserId(user.uid);
+
     const loadData = async () => {
       try {
-        const savedProfile = await db.settings.get('company_profile');
-        if (savedProfile) setProfile(savedProfile);
+        if (isProUser) {
+          // 🟢 PRO USER: Cloud se data lein
+          const profileRef = doc(firestore, "settings", user.uid);
+          const profileSnap = await getDoc(profileRef);
+          if (profileSnap.exists()) setProfile(profileSnap.data());
 
-        const savedPayment = await db.payment_details.get('main_payment');
-        if (savedPayment) {
-          const { id, ...restOfData } = savedPayment; 
-          setPaymentDetails(prev => ({ ...prev, ...restOfData }));
+          const paymentRef = doc(firestore, "payment_details", user.uid);
+          const paymentSnap = await getDoc(paymentRef);
+          if (paymentSnap.exists()) setPaymentDetails(paymentSnap.data());
+
+        } else {
+          // 🟡 FREE USER: Local se data lein
+          const savedProfile = await db.settings.get('company_profile');
+          if (savedProfile) setProfile(savedProfile);
+
+          const savedPayment = await db.payment_details.get('main_payment');
+          if (savedPayment) {
+            const { id, ...restOfData } = savedPayment; 
+            setPaymentDetails(prev => ({ ...prev, ...restOfData }));
+          }
         }
       } catch (error) {
         console.error("Load Error:", error);
       }
     };
     loadData();
-  }, []);
+  }, [isProUser]); // Jab Pro status change ho toh dobara load karein
 
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
@@ -62,10 +85,19 @@ const Settings = () => {
     }
   };
 
+  // ==========================================
+  // SAVE PROFILE (Cloud for Pro, Local for Free)
+  // ==========================================
   const handleSaveProfile = async (e) => {
     e.preventDefault();
     try {
-      await db.settings.put({ ...profile, id: 'company_profile' });
+      if (isProUser && userId) {
+        // Cloud mein save karein
+        await setDoc(doc(firestore, "settings", userId), profile);
+      } else {
+        // Local mein save karein
+        await db.settings.put({ ...profile, id: 'company_profile' });
+      }
       setStatusMessage({ type: "success", text: "Profile & Logo saved successfully!" });
       setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
     } catch (error) {
@@ -73,15 +105,21 @@ const Settings = () => {
     }
   };
 
+  // ==========================================
+  // SAVE PAYMENT DETAILS (Cloud for Pro, Local for Free)
+  // ==========================================
   const handleSavePayment = async (e) => {
     e.preventDefault();
     try {
-      const dataToSave = {
-        id: 'main_payment', 
-        ...paymentDetails
-      };
-      await db.payment_details.put(dataToSave);
-      setPaymentDetails(prev => ({ ...prev, ...dataToSave }));
+      if (isProUser && userId) {
+        // Cloud mein save karein (Sahi jagah taake PDF mein sahi aaye)
+        await setDoc(doc(firestore, "payment_details", userId), paymentDetails);
+      } else {
+        // Local mein save karein
+        const dataToSave = { id: 'main_payment', ...paymentDetails };
+        await db.payment_details.put(dataToSave);
+      }
+      
       setStatusMessage({ type: "success", text: "Payment details saved permanently!" });
       setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
     } catch (error) {
@@ -97,6 +135,9 @@ const Settings = () => {
     }));
   };
 
+  // ==========================================
+  // ACTIVATION & MIGRATION LOGIC
+  // ==========================================
   const handleActivate = async () => {
     if (!licenseKey) {
       setStatusMessage({ type: "error", text: "Please enter a license key." });
@@ -134,6 +175,7 @@ const Settings = () => {
       const expiryDate = new Date(purchaseDate);
       expiryDate.setMonth(expiryDate.getMonth() + 1);
 
+      // 1. User ko Pro mark karein
       await setDoc(doc(firestore, "pro_users", currentUser.uid), {
         licenseKey: formattedKey,
         email: currentUser.email || profile.email || "no-email@dealflow.com",
@@ -148,8 +190,26 @@ const Settings = () => {
         usedBy: currentUser.uid
       });
 
-      setIsProUser(true); 
+      // 👇 2. MIGRATION LOGIC: Local data ko Cloud mein bhejein
+      // (Yeh isliye taake Pro banne ke baad user ka purana local profile/payment cloud mein chala jaye)
+      setStatusMessage({ type: "info", text: "Migrating your local data to cloud..." });
+      
+      // Local se data uthayen
+      const localProfile = await db.settings.get('company_profile');
+      const localPayment = await db.payment_details.get('main_payment');
 
+      // Cloud mein save karein
+      if (localProfile) {
+        const { id, ...profileData } = localProfile;
+        await setDoc(doc(firestore, "settings", currentUser.uid), profileData);
+      }
+      if (localPayment) {
+        const { id, ...paymentData } = localPayment;
+        await setDoc(doc(firestore, "payment_details", currentUser.uid), paymentData);
+      }
+      
+      // 3. Page state update karein
+      setIsProUser(true); 
       setStatusMessage({ 
         type: "success", 
         text: `Congratulations! You are now a Pro user. Your plan will expire on ${expiryDate.toLocaleDateString()}.` 
@@ -161,17 +221,17 @@ const Settings = () => {
     }
   };
 
-  // 👇 NAYA FUNCTION: Local Data Clear Karne Ke Liye
+  // Local Data Clear Function
   const handleClearLocalData = async () => {
     if(window.confirm("Are you sure you want to delete all local data? This cannot be undone.")) {
       try {
         await db.clients.clear();
-        await db.deals.clear(); // Agar deals ka table hai
-        await db.proposals.clear(); // Agar proposals ka table hai
+        await db.deals.clear(); 
+        await db.proposals.clear(); 
         await db.invoices.clear();
         await db.expenses.clear();
-        
-        // localStorage.clear(); // Agar aap login state bhi clear karna chahte hain (Optional)
+        await db.settings.clear();
+        await db.payment_details.clear();
         
         setStatusMessage({ type: "success", text: "Local data cleared successfully. Please refresh the page." });
         setTimeout(() => window.location.reload(), 2000);
@@ -298,7 +358,6 @@ const Settings = () => {
               <span>⬆️</span> <span>Import Backup</span>
             </button>
 
-            {/* 👇 YEH NAYA BUTTON HAI JIS SE LOCAL DATA CLEAR HOGA */}
             <button 
               onClick={handleClearLocalData}
               className="w-full bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2 mt-4"
@@ -411,7 +470,7 @@ const Settings = () => {
             </div>
           )}
 
-                    {paymentDetails.method === 'Bitcoin' && (
+          {paymentDetails.method === 'Bitcoin' && (
             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
               <label className="block text-sm font-medium text-gray-700 mb-1">Bitcoin (Mainnet) Wallet Address</label>
               <input type="text" value={paymentDetails.btcAddress || ''} onChange={(e) => setPaymentDetails({...paymentDetails, btcAddress: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter Bitcoin Address" />
@@ -436,4 +495,3 @@ const Settings = () => {
 };
 
 export default Settings;
-           
