@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { doc, setDoc } from "firebase/firestore";
-import { getAuth } from "firebase/auth"; // 👈 Naya import (UID nikalne ke liye)
+import { doc, setDoc, getDoc, updateDoc } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 import { db as firestore } from "./firebase"; 
 import { db } from './db/schema';
 
@@ -103,46 +103,58 @@ const Settings = () => {
       return;
     }
 
-    setStatusMessage({ type: "info", text: "Verifying..." });
+    setStatusMessage({ type: "info", text: "Verifying License Key..." });
 
     try {
-      if (licenseKey.trim() === "TEST123") {
-        
-        // 👇 Yahan humne current logged-in user ki UID nikalne ka logic dala hai
-        const auth = getAuth();
-        const currentUser = auth.currentUser;
+      const auth = getAuth();
+      const currentUser = auth.currentUser;
 
-        if (!currentUser) {
-          setStatusMessage({ type: "error", text: "User not logged in. Please log in again." });
-          return;
-        }
-
-        const purchaseDate = new Date(); 
-        const monthsToAdd = 1; 
-        const expiryDate = new Date(purchaseDate);
-        expiryDate.setMonth(expiryDate.getMonth() + monthsToAdd);
-
-        // 👇 Ab "test_client_1" ki jagah asli user ki UID use ho rahi hai
-        await setDoc(doc(firestore, "pro_users", currentUser.uid), {
-          licenseKey: licenseKey,
-          email: currentUser.email || profile.email || "test@dealflow.com",
-          isPro: true,
-          activatedAt: purchaseDate.toISOString(),
-          expiresAt: expiryDate.toISOString(),
-          status: "active"
-        });
-
-        setIsProUser(true); 
-
-        setStatusMessage({ 
-          type: "success", 
-          text: `Mubarak ho! Aap ab Pro user hain. Aapka plan ${monthsToAdd} mahine baad expire hoga.` 
-        });
-        
-      } else {
-        setStatusMessage({ type: "error", text: "Invalid License Key. Please check your receipt." });
+      if (!currentUser) {
+        setStatusMessage({ type: "error", text: "User not logged in. Please log in again." });
+        return;
       }
+
+      const formattedKey = licenseKey.trim().toUpperCase();
+      const keyRef = doc(firestore, "license_keys", formattedKey);
+      const keySnap = await getDoc(keyRef);
+
+      if (!keySnap.exists()) {
+        setStatusMessage({ type: "error", text: "Invalid License Key. Please check your receipt." });
+        return;
+      }
+
+      const keyData = keySnap.data();
+
+      if (keyData.isUsed) {
+        setStatusMessage({ type: "error", text: "This license key has already been used." });
+        return;
+      }
+
+      const purchaseDate = new Date(); 
+      const expiryDate = new Date(purchaseDate);
+      expiryDate.setMonth(expiryDate.getMonth() + 1);
+
+      await setDoc(doc(firestore, "pro_users", currentUser.uid), {
+        licenseKey: formattedKey,
+        email: currentUser.email || profile.email || "no-email@dealflow.com",
+        isPro: true,
+        activatedAt: purchaseDate.toISOString(),
+        expiresAt: expiryDate.toISOString(),
+        status: "active"
+      });
+
+      await updateDoc(keyRef, {
+        isUsed: true,
+        usedBy: currentUser.uid
+      });
+
+      setStatusMessage({ 
+  type: "success", 
+  text: `Congratulations! You are now a Pro user. Your plan will expire on ${expiryDate.toLocaleDateString()}.` 
+});
+      
     } catch (error) {
+      console.error("Activation error:", error);
       setStatusMessage({ type: "error", text: "Firebase Error: " + error.message });
     }
   };
@@ -186,7 +198,6 @@ const Settings = () => {
            <p className="text-sm text-green-600 font-medium">✅ Your account is upgraded. Automatic cloud backup is active.</p>
         ) : (
           <>
-            {/* 👇 Yahan Price $5 se $20 kar diya gaya hai */}
             <p className="text-sm text-gray-500 mb-4">Get automatic cloud backup and multi-device sync for just $20/month.</p>
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
@@ -389,7 +400,7 @@ const Settings = () => {
         </form>
       </div>
 
-    </div>
+        </div>
   );
 };
 
