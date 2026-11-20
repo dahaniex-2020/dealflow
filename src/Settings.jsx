@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { doc, setDoc } from "firebase/firestore";
+import { getAuth } from "firebase/auth"; // 👈 Naya import (UID nikalne ke liye)
 import { db as firestore } from "./firebase"; 
 import { db } from './db/schema';
 
@@ -106,14 +107,25 @@ const Settings = () => {
 
     try {
       if (licenseKey.trim() === "TEST123") {
+        
+        // 👇 Yahan humne current logged-in user ki UID nikalne ka logic dala hai
+        const auth = getAuth();
+        const currentUser = auth.currentUser;
+
+        if (!currentUser) {
+          setStatusMessage({ type: "error", text: "User not logged in. Please log in again." });
+          return;
+        }
+
         const purchaseDate = new Date(); 
         const monthsToAdd = 1; 
         const expiryDate = new Date(purchaseDate);
         expiryDate.setMonth(expiryDate.getMonth() + monthsToAdd);
 
-        await setDoc(doc(firestore, "pro_users", "test_client_1"), {
+        // 👇 Ab "test_client_1" ki jagah asli user ki UID use ho rahi hai
+        await setDoc(doc(firestore, "pro_users", currentUser.uid), {
           licenseKey: licenseKey,
-          email: profile.email || "test@dealflow.com",
+          email: currentUser.email || profile.email || "test@dealflow.com",
           isPro: true,
           activatedAt: purchaseDate.toISOString(),
           expiresAt: expiryDate.toISOString(),
@@ -128,7 +140,7 @@ const Settings = () => {
         });
         
       } else {
-        setStatusMessage({ type: "error", text: "Invalid License Key. Please check your Gumroad receipt." });
+        setStatusMessage({ type: "error", text: "Invalid License Key. Please check your receipt." });
       }
     } catch (error) {
       setStatusMessage({ type: "error", text: "Firebase Error: " + error.message });
@@ -174,7 +186,8 @@ const Settings = () => {
            <p className="text-sm text-green-600 font-medium">✅ Your account is upgraded. Automatic cloud backup is active.</p>
         ) : (
           <>
-            <p className="text-sm text-gray-500 mb-4">Get automatic cloud backup and multi-device sync for just $5/month.</p>
+            {/* 👇 Yahan Price $5 se $20 kar diya gaya hai */}
+            <p className="text-sm text-gray-500 mb-4">Get automatic cloud backup and multi-device sync for just $20/month.</p>
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
                 <span className="absolute left-3 top-3 text-gray-400">🔑</span>
