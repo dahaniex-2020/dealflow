@@ -9,34 +9,16 @@ const Settings = () => {
   const { isProUser, setIsProUser } = useOutletContext();
   const [userId, setUserId] = useState(null);
 
-  const [profile, setProfile] = useState({
-    name: "", email: "", businessName: "", logo: "" 
-  });
-  
+  // States
+  const [profile, setProfile] = useState({ name: "", email: "", businessName: "", logo: "" });
   const [licenseKey, setLicenseKey] = useState("");
-  
   const [paymentDetails, setPaymentDetails] = useState({
-    method: 'PayPal',
-    paypalUSD: "", 
-    bankDetails: "",
-    zelleDetails: "",
-    wiseDetails: "",
-    payoneerDetails: "",
-    cardNumber: "",
-    cardHolder: "",
-    cardExpiry: "",
-    cardCvv: "",
-    usdtTrc20: "",
-    usdtBep20: "",
-    usdtErc20: "",
-    btcAddress: ""
+    method: 'PayPal', paypalUSD: "", bankDetails: "", zelleDetails: "", wiseDetails: "", payoneerDetails: "",
+    cardNumber: "", cardHolder: "", cardExpiry: "", cardCvv: "", usdtTrc20: "", usdtBep20: "", usdtErc20: "", btcAddress: ""
   });
-
   const [statusMessage, setStatusMessage] = useState({ type: "", text: "" });
 
-  // ==========================================
-  // DATA LOADING LOGIC (Cloud for Pro, Local for Free)
-  // ==========================================
+  // Data Loading (Cloud for Pro, Local for Free)
   useEffect(() => {
     const auth = getAuth();
     const user = auth.currentUser;
@@ -47,7 +29,6 @@ const Settings = () => {
     const loadData = async () => {
       try {
         if (isProUser) {
-          // 🟢 PRO USER: Cloud se data lein
           const profileRef = doc(firestore, "settings", user.uid);
           const profileSnap = await getDoc(profileRef);
           if (profileSnap.exists()) setProfile(profileSnap.data());
@@ -57,7 +38,6 @@ const Settings = () => {
           if (paymentSnap.exists()) setPaymentDetails(paymentSnap.data());
 
         } else {
-          // 🟡 FREE USER: Local se data lein
           const savedProfile = await db.settings.get('company_profile');
           if (savedProfile) setProfile(savedProfile);
 
@@ -72,184 +52,122 @@ const Settings = () => {
       }
     };
     loadData();
-  }, [isProUser]); // Jab Pro status change ho toh dobara load karein
+  }, [isProUser]);
 
   const handleLogoUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onloadend = () => {
-        setProfile({ ...profile, logo: reader.result });
-      };
+      reader.onloadend = () => setProfile({ ...profile, logo: reader.result });
       reader.readAsDataURL(file);
     }
-  };
+  };// Save Functions (Cloud for Pro, Local for Free)
+const handleSaveProfile = async (e) => {
+  e.preventDefault();
+  try {
+    if (isProUser && userId) {
+      await setDoc(doc(firestore, "settings", userId), profile);
+    } else {
+      await db.settings.put({ ...profile, id: 'company_profile' });
+    }
+    setStatusMessage({ type: "success", text: "Profile & Logo saved successfully!" });
+    setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
+  } catch (error) {
+    setStatusMessage({ type: "error", text: "Failed to save profile." });
+  }
+};
 
-  // ==========================================
-  // SAVE PROFILE (Cloud for Pro, Local for Free)
-  // ==========================================
-  const handleSaveProfile = async (e) => {
-    e.preventDefault();
+const handleSavePayment = async (e) => {
+  e.preventDefault();
+  try {
+    if (isProUser && userId) {
+      await setDoc(doc(firestore, "payment_details", userId), paymentDetails);
+    } else {
+      const dataToSave = { id: 'main_payment', ...paymentDetails };
+      await db.payment_details.put(dataToSave);
+    }
+    setStatusMessage({ type: "success", text: "Payment details saved permanently!" });
+    setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
+  } catch (error) {
+    console.error("Save Error:", error);
+    setStatusMessage({ type: "error", text: "Failed to save payment details." });
+  }
+};
+
+const handleMethodChange = (e) => setPaymentDetails(prev => ({ ...prev, method: e.target.value }));
+
+// Activation & Migration Logic
+const handleActivate = async () => {
+  if (!licenseKey) return setStatusMessage({ type: "error", text: "Please enter a license key." });
+  setStatusMessage({ type: "info", text: "Verifying License Key..." });
+
+  try {
+    const auth = getAuth();
+    const currentUser = auth.currentUser;
+    if (!currentUser) return setStatusMessage({ type: "error", text: "User not logged in. Please log in again." });
+
+    const formattedKey = licenseKey.trim().toUpperCase();
+    const keyRef = doc(firestore, "license_keys", formattedKey);
+    const keySnap = await getDoc(keyRef);
+
+    if (!keySnap.exists()) return setStatusMessage({ type: "error", text: "Invalid License Key. Please check your receipt." });
+    
+    const keyData = keySnap.data();
+    if (keyData.isUsed) return setStatusMessage({ type: "error", text: "This license key has already been used." });
+
+    const purchaseDate = new Date(); 
+    const expiryDate = new Date(purchaseDate);
+    expiryDate.setMonth(expiryDate.getMonth() + 1);
+
+    // User ko Pro mark karein
+    await setDoc(doc(firestore, "pro_users", currentUser.uid), {
+      licenseKey: formattedKey, email: currentUser.email || profile.email || "no-email@dealflow.com",
+      isPro: true, activatedAt: purchaseDate.toISOString(), expiresAt: expiryDate.toISOString(), status: "active"
+    });
+
+    await updateDoc(keyRef, { isUsed: true, usedBy: currentUser.uid });
+
+    // Migration Logic (Local to Cloud)
+    setStatusMessage({ type: "info", text: "Migrating your local data to cloud..." });
+    const localProfile = await db.settings.get('company_profile');
+    const localPayment = await db.payment_details.get('main_payment');
+
+    if (localProfile) {
+      const { id, ...profileData } = localProfile;
+      await setDoc(doc(firestore, "settings", currentUser.uid), profileData);
+    }
+    if (localPayment) {
+      const { id, ...paymentData } = localPayment;
+      await setDoc(doc(firestore, "payment_details", currentUser.uid), paymentData);
+    }
+    
+    setIsProUser(true); 
+    setStatusMessage({ type: "success", text: `Congratulations! You are now a Pro user. Your plan will expire on ${expiryDate.toLocaleDateString()}.` });
+    
+  } catch (error) {
+    setStatusMessage({ type: "error", text: "Firebase Error: " + error.message });
+  }
+};
+
+const handleClearLocalData = async () => {
+  if(window.confirm("Are you sure you want to delete all local data? This cannot be undone.")) {
     try {
-      if (isProUser && userId) {
-        // Cloud mein save karein
-        await setDoc(doc(firestore, "settings", userId), profile);
-      } else {
-        // Local mein save karein
-        await db.settings.put({ ...profile, id: 'company_profile' });
-      }
-      setStatusMessage({ type: "success", text: "Profile & Logo saved successfully!" });
-      setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
+      await db.clients.clear(); await db.deals.clear(); await db.proposals.clear();
+      await db.invoices.clear(); await db.expenses.clear(); await db.settings.clear(); await db.payment_details.clear();
+      setStatusMessage({ type: "success", text: "Local data cleared successfully. Please refresh the page." });
+      setTimeout(() => window.location.reload(), 2000);
     } catch (error) {
-      setStatusMessage({ type: "error", text: "Failed to save profile." });
+      setStatusMessage({ type: "error", text: "Failed to clear local data." });
     }
-  };
-
-  // ==========================================
-  // SAVE PAYMENT DETAILS (Cloud for Pro, Local for Free)
-  // ==========================================
-  const handleSavePayment = async (e) => {
-    e.preventDefault();
-    try {
-      if (isProUser && userId) {
-        // Cloud mein save karein (Sahi jagah taake PDF mein sahi aaye)
-        await setDoc(doc(firestore, "payment_details", userId), paymentDetails);
-      } else {
-        // Local mein save karein
-        const dataToSave = { id: 'main_payment', ...paymentDetails };
-        await db.payment_details.put(dataToSave);
-      }
-      
-      setStatusMessage({ type: "success", text: "Payment details saved permanently!" });
-      setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
-    } catch (error) {
-      console.error("Save Error:", error);
-      setStatusMessage({ type: "error", text: "Failed to save payment details." });
-    }
-  };
-
-  const handleMethodChange = (e) => {
-    setPaymentDetails(prev => ({
-      ...prev,
-      method: e.target.value
-    }));
-  };
-
-  // ==========================================
-  // ACTIVATION & MIGRATION LOGIC
-  // ==========================================
-  const handleActivate = async () => {
-    if (!licenseKey) {
-      setStatusMessage({ type: "error", text: "Please enter a license key." });
-      return;
-    }
-
-    setStatusMessage({ type: "info", text: "Verifying License Key..." });
-
-    try {
-      const auth = getAuth();
-      const currentUser = auth.currentUser;
-
-      if (!currentUser) {
-        setStatusMessage({ type: "error", text: "User not logged in. Please log in again." });
-        return;
-      }
-
-      const formattedKey = licenseKey.trim().toUpperCase();
-      const keyRef = doc(firestore, "license_keys", formattedKey);
-      const keySnap = await getDoc(keyRef);
-
-      if (!keySnap.exists()) {
-        setStatusMessage({ type: "error", text: "Invalid License Key. Please check your receipt." });
-        return;
-      }
-
-      const keyData = keySnap.data();
-
-      if (keyData.isUsed) {
-        setStatusMessage({ type: "error", text: "This license key has already been used." });
-        return;
-      }
-
-      const purchaseDate = new Date(); 
-      const expiryDate = new Date(purchaseDate);
-      expiryDate.setMonth(expiryDate.getMonth() + 1);
-
-      // 1. User ko Pro mark karein
-      await setDoc(doc(firestore, "pro_users", currentUser.uid), {
-        licenseKey: formattedKey,
-        email: currentUser.email || profile.email || "no-email@dealflow.com",
-        isPro: true,
-        activatedAt: purchaseDate.toISOString(),
-        expiresAt: expiryDate.toISOString(),
-        status: "active"
-      });
-
-      await updateDoc(keyRef, {
-        isUsed: true,
-        usedBy: currentUser.uid
-      });
-
-      // 👇 2. MIGRATION LOGIC: Local data ko Cloud mein bhejein
-      // (Yeh isliye taake Pro banne ke baad user ka purana local profile/payment cloud mein chala jaye)
-      setStatusMessage({ type: "info", text: "Migrating your local data to cloud..." });
-      
-      // Local se data uthayen
-      const localProfile = await db.settings.get('company_profile');
-      const localPayment = await db.payment_details.get('main_payment');
-
-      // Cloud mein save karein
-      if (localProfile) {
-        const { id, ...profileData } = localProfile;
-        await setDoc(doc(firestore, "settings", currentUser.uid), profileData);
-      }
-      if (localPayment) {
-        const { id, ...paymentData } = localPayment;
-        await setDoc(doc(firestore, "payment_details", currentUser.uid), paymentData);
-      }
-      
-      // 3. Page state update karein
-      setIsProUser(true); 
-      setStatusMessage({ 
-        type: "success", 
-        text: `Congratulations! You are now a Pro user. Your plan will expire on ${expiryDate.toLocaleDateString()}.` 
-      });
-      
-    } catch (error) {
-      console.error("Activation error:", error);
-      setStatusMessage({ type: "error", text: "Firebase Error: " + error.message });
-    }
-  };
-
-  // Local Data Clear Function
-  const handleClearLocalData = async () => {
-    if(window.confirm("Are you sure you want to delete all local data? This cannot be undone.")) {
-      try {
-        await db.clients.clear();
-        await db.deals.clear(); 
-        await db.proposals.clear(); 
-        await db.invoices.clear();
-        await db.expenses.clear();
-        await db.settings.clear();
-        await db.payment_details.clear();
-        
-        setStatusMessage({ type: "success", text: "Local data cleared successfully. Please refresh the page." });
-        setTimeout(() => window.location.reload(), 2000);
-      } catch (error) {
-        setStatusMessage({ type: "error", text: "Failed to clear local data." });
-      }
-    }
-  };
-
-  return (
+  }
+};  return (
     <div className="p-4 md:p-6 max-w-4xl mx-auto space-y-6 text-gray-800">
       <h1 className="text-2xl font-bold mb-4">Settings</h1>
 
       {statusMessage.text && (
         <div className={`p-4 rounded-lg text-sm font-medium ${
           statusMessage.type === 'error' ? 'bg-red-100 text-red-700' : 
-          statusMessage.type === 'success' ? 'bg-green-100 text-green-700' : 
-          'bg-blue-100 text-blue-700'
+          statusMessage.type === 'success' ? 'bg-green-100 text-green-700' : 'bg-blue-100 text-blue-700'
         }`}>
           {statusMessage.text}
         </div>
@@ -264,9 +182,7 @@ const Settings = () => {
               <p className="text-sm text-yellow-700">Your data is stored in this browser. Please export a backup file.</p>
             </div>
           </div>
-          <button className="w-full sm:w-auto bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">
-            Export Now
-          </button>
+          <button className="w-full sm:w-auto bg-yellow-500 hover:bg-yellow-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition">Export Now</button>
         </div>
       )}
 
@@ -284,20 +200,9 @@ const Settings = () => {
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
                 <span className="absolute left-3 top-3 text-gray-400">🔑</span>
-                <input 
-                  type="text" 
-                  placeholder="Enter License Key" 
-                  value={licenseKey}
-                  onChange={(e) => setLicenseKey(e.target.value)}
-                  className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none"
-                />
+                <input type="text" placeholder="Enter License Key" value={licenseKey} onChange={(e) => setLicenseKey(e.target.value)} className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none" />
               </div>
-              <button 
-                onClick={handleActivate}
-                className="w-full sm:w-auto bg-gray-900 hover:bg-black text-white px-6 py-2 rounded-lg font-medium transition"
-              >
-                Activate
-              </button>
+              <button onClick={handleActivate} className="w-full sm:w-auto bg-gray-900 hover:bg-black text-white px-6 py-2 rounded-lg font-medium transition">Activate</button>
             </div>
           </>
         )}
@@ -308,23 +213,19 @@ const Settings = () => {
           <span className="text-xl">👤</span>
           <h2 className="text-lg font-bold">My Profile</h2>
         </div>
-        
         <form onSubmit={handleSaveProfile} className="space-y-4">
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Full Name</label>
             <input type="text" value={profile.name} onChange={(e) => setProfile({...profile, name: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Email Address</label>
             <input type="email" value={profile.email} onChange={(e) => setProfile({...profile, email: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1">Business Name</label>
             <input type="text" value={profile.businessName} onChange={(e) => setProfile({...profile, businessName: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" />
           </div>
-
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-2">COMPANY LOGO</label>
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
@@ -336,10 +237,7 @@ const Settings = () => {
               <input type="file" accept="image/*" onChange={handleLogoUpload} className="w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"/>
             </div>
           </div>
-
-          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition">
-            Save Profile
-          </button>
+          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition">Save Profile</button>
         </form>
       </div>
 
@@ -349,22 +247,10 @@ const Settings = () => {
             <span className="text-xl">🛡️</span>
             <h2 className="text-lg font-bold">Data Backup & Restore</h2>
           </div>
-          
           <div className="space-y-3">
-            <button className="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2">
-              <span>⬇️</span> <span>Export Backup (JSON)</span>
-            </button>
-            <button className="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2">
-              <span>⬆️</span> <span>Import Backup</span>
-            </button>
-
-            <button 
-              onClick={handleClearLocalData}
-              className="w-full bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2 mt-4"
-            >
-              <span>🗑️</span> <span>Clear Local Data (Danger)</span>
-            </button>
-
+            <button className="w-full bg-green-600 hover:bg-green-700 text-white py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2"><span>⬇️</span> <span>Export Backup (JSON)</span></button>
+            <button className="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2"><span>⬆️</span> <span>Import Backup</span></button>
+            <button onClick={handleClearLocalData} className="w-full bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2 mt-4"><span>🗑️</span> <span>Clear Local Data (Danger)</span></button>
           </div>
         </div>
       )}
@@ -378,20 +264,8 @@ const Settings = () => {
         
         <form onSubmit={handleSavePayment} className="space-y-4">
           <div>
-            <select 
-              value={paymentDetails.method}
-              onChange={handleMethodChange}
-              className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none mb-2"
-            >
-              <option value="PayPal">PayPal</option>
-              <option value="Bank Transfer">Bank Transfer</option>
-              <option value="Credit/Debit Card">Credit/Debit Card</option>
-              <option value="Zelle">Zelle</option>
-              <option value="Wise">Wise</option>
-              <option value="Payoneer">Payoneer</option>
-              <option value="USDT">USDT</option>
-              <option value="Bitcoin">Bitcoin</option>
-              <option value="Other">Other</option>
+            <select value={paymentDetails.method} onChange={handleMethodChange} className="w-full px-4 py-2 border border-gray-300 rounded-lg bg-gray-50 focus:ring-2 focus:ring-blue-500 outline-none mb-2">
+              <option value="PayPal">PayPal</option><option value="Bank Transfer">Bank Transfer</option><option value="Credit/Debit Card">Credit/Debit Card</option><option value="Zelle">Zelle</option><option value="Wise">Wise</option><option value="Payoneer">Payoneer</option><option value="USDT">USDT</option><option value="Bitcoin">Bitcoin</option><option value="Other">Other</option>
             </select>
           </div>
 
@@ -484,12 +358,9 @@ const Settings = () => {
             </div>
           )}
 
-          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition">
-            Save Payment Details
-          </button>
+          <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-lg font-medium transition">Save Payment Details</button>
         </form>
       </div>
-
     </div>
   );
 };

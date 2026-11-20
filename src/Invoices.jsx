@@ -1,37 +1,37 @@
 import React, { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom'; // 👈 Pro status check ke liye
+import { useOutletContext } from 'react-router-dom';
 import { db } from './db/schema'; 
 import { Trash2, FileText, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-// Firebase imports
 import { db as firestore } from './firebase'; 
-import { collection, deleteDoc, doc, onSnapshot, query, where, getDocs, addDoc } from "firebase/firestore";
+import { collection, deleteDoc, doc, onSnapshot, query, where, getDocs, addDoc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 const Invoices = () => {
-  const { isProUser } = useOutletContext(); // 👈 Layout se Pro status lein
+  const { isProUser } = useOutletContext(); 
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
   const [isMigrating, setIsMigrating] = useState(false);
+  const [userId, setUserId] = useState(null);
 
   useEffect(() => { 
     const auth = getAuth();
     const user = auth.currentUser;
     if (!user) return;
 
+    setUserId(user.uid);
+
     let unsubscribeInvoices;
     let unsubscribeClients;
 
     const initData = async () => {
       if (isProUser) {
-        // 1. Cloud se Clients fetch karein (PDF generate karne ke liye zaroori hai)
         const qClients = query(collection(firestore, "clients"), where("userId", "==", user.uid));
         unsubscribeClients = onSnapshot(qClients, (snapshot) => {
           setClients(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
         });
 
-        // 2. Invoices Migration aur Live Sync
         const qInvoices = query(collection(firestore, "invoices"), where("userId", "==", user.uid));
         const invSnapshot = await getDocs(qInvoices);
         
@@ -41,12 +41,10 @@ const Invoices = () => {
           if (localInvoices.length > 0) {
             for (const item of localInvoices) {
               await addDoc(collection(firestore, "invoices"), {
-                ...item,
-                userId: user.uid,
-                createdAt: new Date().toISOString()
+                ...item, userId: user.uid, createdAt: new Date().toISOString()
               });
             }
-            await db.invoices.clear(); // Local data clear
+            await db.invoices.clear(); 
           }
           setIsMigrating(false);
         }
@@ -56,7 +54,6 @@ const Invoices = () => {
         });
 
       } else {
-        // Normal User (Local)
         loadLocalData();
       }
     };
@@ -89,21 +86,42 @@ const Invoices = () => {
     }
   };
 
-  // ==========================================
-  // PREMIUM PDF GENERATOR FUNCTION
-  // ==========================================
   const downloadPDF = async (invoice) => {
     try {
-      // Client find karein (Cloud ID string hoti hai, local ID number)
       const client = clients.find(c => String(c.id) === String(invoice.clientId));
       
       let company = null;
       let savedPayment = null;
+
+      // 👇 SMART FETCH LOGIC (Cloud se pehle, phir Local)
       try {
-        company = await db.settings.get('company_profile');
-        savedPayment = await db.payment_details.get('main_payment'); 
+        if (isProUser && userId) {
+          const companyRef = doc(firestore, "settings", userId);
+          const companySnap = await getDoc(companyRef);
+          if (companySnap.exists()) company = companySnap.data();
+
+          const paymentRef = doc(firestore, "payment_details", userId);
+          const paymentSnap = await getDoc(paymentRef);
+          if (paymentSnap.exists()) savedPayment = paymentSnap.data();
+        } 
+        
+        if (!savedPayment) {
+          const localPayment = await db.payment_details.get('main_payment'); 
+          if (localPayment) {
+            const { id, ...rest } = localPayment;
+            savedPayment = rest;
+          }
+        }
+        
+        if (!company) {
+          const localCompany = await db.settings.get('company_profile');
+          if (localCompany) {
+            const { id, ...rest } = localCompany;
+            company = rest;
+          }
+        }
       } catch (err) {
-        console.log("Data not found.");
+        console.log("Error fetching details for PDF:", err);
       }
       
       const doc = new jsPDF();
@@ -162,7 +180,6 @@ const Invoices = () => {
       doc.text(`Date:`, 120, yPos + 44);
       
       doc.setFont("helvetica", "bold");
-      // ID format handling (Cloud IDs lambi hoti hain, toh sirf pehle 6 characters dikhayein)
       const displayId = String(invoice.id).substring(0, 6).toUpperCase();
       doc.text(`#INV-${displayId}`, 160, yPos + 38);
       doc.text(`${invoice.date}`, 160, yPos + 44);
@@ -185,7 +202,6 @@ const Invoices = () => {
         styles: { fontSize: 11, cellPadding: 6, textColor: [50, 50, 50] },
       });
 
-      // Total Box
       let finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 15 : yPos + 100;
       
       doc.setFillColor(248, 250, 252); 
@@ -200,7 +216,9 @@ const Invoices = () => {
       doc.setFont("helvetica", "bold");
       doc.text(`$${Number(invoice.amount).toLocaleString()}`, 190, finalY + 13, { align: "right" });
 
-      // PAYMENT METHOD DETAILS
+      // ==========================================
+      // PAYMENT DETAILS SECTION (CRITICAL)
+      // ==========================================
       let currentY = finalY + 35; 
 
       if (savedPayment && invoice.paymentMethod) {
@@ -219,12 +237,13 @@ const Invoices = () => {
         
         let paymentText = `Method: ${invoice.paymentMethod}`;
         
-        if (invoice.paymentMethod === 'PayPal') paymentText += ` | Account: ${savedPayment.paypalUSD}`;
-        if (invoice.paymentMethod === 'Bank Transfer') paymentText += ` | Details: ${savedPayment.bankDetails}`;
-        if (invoice.paymentMethod === 'Zelle') paymentText += ` | Details: ${savedPayment.zelleDetails}`;
-        if (invoice.paymentMethod === 'Wise') paymentText += ` | Details: ${savedPayment.wiseDetails}`;
-        if (invoice.paymentMethod === 'Payoneer') paymentText += ` | Details: ${savedPayment.payoneerDetails}`;
-        if (invoice.paymentMethod === 'Credit Card') paymentText += ` | Card: ****${savedPayment.cardNumber?.slice(-4) || ''}`;
+        if (invoice.paymentMethod.includes('PayPal')) paymentText += ` | Account: ${savedPayment.paypalUSD || 'N/A'}`;
+        if (invoice.paymentMethod.includes('Bank Transfer')) paymentText += ` | Details: ${savedPayment.bankDetails || 'N/A'}`;
+        if (invoice.paymentMethod.includes('Zelle')) paymentText += ` | Details: ${savedPayment.zelleDetails || 'N/A'}`;
+        if (invoice.paymentMethod.includes('Wise')) paymentText += ` | Details: ${savedPayment.wiseDetails || 'N/A'}`;
+        if (invoice.paymentMethod.includes('Payoneer')) paymentText += ` | Details: ${savedPayment.payoneerDetails || 'N/A'}`;
+        if (invoice.paymentMethod.includes('Credit Card')) paymentText += ` | Card: ****${savedPayment.cardNumber?.slice(-4) || 'N/A'}`;
+        
         if (invoice.paymentMethod.includes('USDT')) {
           const network = invoice.paymentMethod.split('(')[1]?.replace(')', '');
           let addr = savedPayment.usdtTrc20;
@@ -233,12 +252,28 @@ const Invoices = () => {
           paymentText += ` | Address: ${addr || 'N/A'}`;
         }
         if (invoice.paymentMethod.includes('Bitcoin')) paymentText += ` | Address: ${savedPayment.btcAddress || 'N/A'}`;
-        if (invoice.paymentMethod === 'Other') paymentText += ` | Details: ${savedPayment.bankDetails}`;
+        if (invoice.paymentMethod.includes('Other')) paymentText += ` | Details: ${savedPayment.bankDetails || 'N/A'}`;
 
         const splitText = doc.splitTextToSize(paymentText, 160);
         doc.text(splitText, 20, currentY + 16);
         
         currentY += 35; 
+      } else {
+        // Warning if details are missing
+        doc.setFillColor(254, 242, 242); 
+        doc.setDrawColor(252, 165, 165); 
+        doc.roundedRect(15, currentY, 180, 25, 3, 3, 'FD'); 
+        
+        doc.setFontSize(10); 
+        doc.setTextColor(220, 38, 38); 
+        doc.setFont("helvetica", "bold");
+        doc.text("PAYMENT DETAILS MISSING", 20, currentY + 10);
+        
+        doc.setFontSize(9); 
+        doc.setFont("helvetica", "normal");
+        doc.text("Please go to Settings > Payment Accounts and save your details before generating an invoice.", 20, currentY + 18);
+        
+        currentY += 35;
       }
 
       doc.setFontSize(10);
@@ -246,7 +281,7 @@ const Invoices = () => {
       doc.setFont("helvetica", "italic");
       doc.text("Thank you for your business!", 105, currentY + 10, { align: "center" });
 
-      doc.save(`Invoice_${String(invoice.id).substring(0, 6)}.pdf`);
+      doc.save(`Invoice_${displayId}.pdf`);
       
     } catch (error) {
       console.error("PDF Error: ", error);
@@ -338,4 +373,5 @@ const Invoices = () => {
     </div>
   );
 };
+
 export default Invoices;
