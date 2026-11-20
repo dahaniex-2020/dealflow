@@ -1,26 +1,91 @@
 import React, { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom'; // 👈 Pro status check ke liye
 import { db } from './db/schema'; 
 import { Trash2, FileText, Download } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+// Firebase imports
+import { db as firestore } from './firebase'; 
+import { collection, deleteDoc, doc, onSnapshot, query, where, getDocs, addDoc } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const Invoices = () => {
+  const { isProUser } = useOutletContext(); // 👈 Layout se Pro status lein
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
+  const [isMigrating, setIsMigrating] = useState(false);
 
   useEffect(() => { 
-    loadData(); 
-  }, []);
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) return;
 
-  const loadData = async () => {
+    let unsubscribeInvoices;
+    let unsubscribeClients;
+
+    const initData = async () => {
+      if (isProUser) {
+        // 1. Cloud se Clients fetch karein (PDF generate karne ke liye zaroori hai)
+        const qClients = query(collection(firestore, "clients"), where("userId", "==", user.uid));
+        unsubscribeClients = onSnapshot(qClients, (snapshot) => {
+          setClients(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+
+        // 2. Invoices Migration aur Live Sync
+        const qInvoices = query(collection(firestore, "invoices"), where("userId", "==", user.uid));
+        const invSnapshot = await getDocs(qInvoices);
+        
+        if (invSnapshot.empty) {
+          setIsMigrating(true);
+          const localInvoices = await db.invoices.toArray();
+          if (localInvoices.length > 0) {
+            for (const item of localInvoices) {
+              await addDoc(collection(firestore, "invoices"), {
+                ...item,
+                userId: user.uid,
+                createdAt: new Date().toISOString()
+              });
+            }
+            await db.invoices.clear(); // Local data clear
+          }
+          setIsMigrating(false);
+        }
+
+        unsubscribeInvoices = onSnapshot(qInvoices, (snapshot) => {
+          setInvoices(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+
+      } else {
+        // Normal User (Local)
+        loadLocalData();
+      }
+    };
+
+    initData();
+
+    return () => {
+      if (unsubscribeInvoices) unsubscribeInvoices();
+      if (unsubscribeClients) unsubscribeClients();
+    };
+  }, [isProUser]);
+
+  const loadLocalData = async () => {
     setInvoices(await db.invoices.toArray());
     setClients(await db.clients.toArray());
   };
 
   const handleDelete = async (id) => {
     if(window.confirm("Are you sure you want to delete this invoice?")) {
-      await db.invoices.delete(id);
-      loadData();
+      try {
+        if (isProUser) {
+          await deleteDoc(doc(firestore, "invoices", id));
+        } else {
+          await db.invoices.delete(id);
+          loadLocalData();
+        }
+      } catch (error) {
+        console.error("Delete error:", error);
+      }
     }
   };
 
@@ -29,9 +94,9 @@ const Invoices = () => {
   // ==========================================
   const downloadPDF = async (invoice) => {
     try {
-      const client = clients.find(c => c.id === Number(invoice.clientId));
+      // Client find karein (Cloud ID string hoti hai, local ID number)
+      const client = clients.find(c => String(c.id) === String(invoice.clientId));
       
-      // 1. Company Profile aur Payment Details dono fetch karein
       let company = null;
       let savedPayment = null;
       try {
@@ -47,14 +112,13 @@ const Invoices = () => {
       doc.setFillColor(37, 99, 235); 
       doc.rect(0, 0, 210, 8, 'F'); 
       
-      // Company Logo & Details
       let yPos = 25;
       if (company && company.logo) {
         try {
           doc.addImage(company.logo, 'PNG', 15, 15, 25, 25); 
           yPos = 50; 
         } catch (imgError) {
-          console.log("Logo format issue, skipping logo.");
+          console.log("Logo format issue.");
         }
       }
 
@@ -75,7 +139,6 @@ const Invoices = () => {
       doc.text("INVOICE", 195, 30, { align: "right" });
 
       // Invoice Details & Billed To
-      // Left Column
       doc.setFontSize(12);
       doc.setTextColor(37, 99, 235); 
       doc.text("Billed To:", 15, yPos + 30);
@@ -89,7 +152,6 @@ const Invoices = () => {
       doc.text(client?.company || 'N/A', 15, yPos + 44);
       doc.text(client?.email || 'N/A', 15, yPos + 50);
 
-      // Right Column
       doc.setFontSize(12);
       doc.setTextColor(37, 99, 235);
       doc.text("Invoice Details:", 120, yPos + 30);
@@ -100,7 +162,9 @@ const Invoices = () => {
       doc.text(`Date:`, 120, yPos + 44);
       
       doc.setFont("helvetica", "bold");
-      doc.text(`#INV-${invoice.id.toString().padStart(4, '0')}`, 160, yPos + 38);
+      // ID format handling (Cloud IDs lambi hoti hain, toh sirf pehle 6 characters dikhayein)
+      const displayId = String(invoice.id).substring(0, 6).toUpperCase();
+      doc.text(`#INV-${displayId}`, 160, yPos + 38);
       doc.text(`${invoice.date}`, 160, yPos + 44);
 
       // Table
@@ -117,14 +181,8 @@ const Invoices = () => {
           fontStyle: 'bold',
           halign: 'left'
         },
-        columnStyles: {
-          1: { halign: 'right' } 
-        },
-        styles: { 
-          fontSize: 11, 
-          cellPadding: 6,
-          textColor: [50, 50, 50]
-        },
+        columnStyles: { 1: { halign: 'right' } },
+        styles: { fontSize: 11, cellPadding: 6, textColor: [50, 50, 50] },
       });
 
       // Total Box
@@ -142,10 +200,8 @@ const Invoices = () => {
       doc.setFont("helvetica", "bold");
       doc.text(`$${Number(invoice.amount).toLocaleString()}`, 190, finalY + 13, { align: "right" });
 
-      // ==========================================
-      // 👈 NAYA SECTION: PAYMENT METHOD DETAILS
-      // ==========================================
-      let currentY = finalY + 35; // Total ke thora neechay se shuru karein
+      // PAYMENT METHOD DETAILS
+      let currentY = finalY + 35; 
 
       if (savedPayment && invoice.paymentMethod) {
         doc.setFillColor(255, 255, 255);
@@ -163,15 +219,12 @@ const Invoices = () => {
         
         let paymentText = `Method: ${invoice.paymentMethod}`;
         
-        // Settings se details nikaal kar text mein add karein
         if (invoice.paymentMethod === 'PayPal') paymentText += ` | Account: ${savedPayment.paypalUSD}`;
         if (invoice.paymentMethod === 'Bank Transfer') paymentText += ` | Details: ${savedPayment.bankDetails}`;
         if (invoice.paymentMethod === 'Zelle') paymentText += ` | Details: ${savedPayment.zelleDetails}`;
         if (invoice.paymentMethod === 'Wise') paymentText += ` | Details: ${savedPayment.wiseDetails}`;
         if (invoice.paymentMethod === 'Payoneer') paymentText += ` | Details: ${savedPayment.payoneerDetails}`;
         if (invoice.paymentMethod === 'Credit Card') paymentText += ` | Card: ****${savedPayment.cardNumber?.slice(-4) || ''}`;
-        
-        // Crypto ke liye
         if (invoice.paymentMethod.includes('USDT')) {
           const network = invoice.paymentMethod.split('(')[1]?.replace(')', '');
           let addr = savedPayment.usdtTrc20;
@@ -185,17 +238,15 @@ const Invoices = () => {
         const splitText = doc.splitTextToSize(paymentText, 160);
         doc.text(splitText, 20, currentY + 16);
         
-        currentY += 35; // Footer iske neechay jayega
+        currentY += 35; 
       }
 
-      // Footer
       doc.setFontSize(10);
       doc.setTextColor(150);
       doc.setFont("helvetica", "italic");
       doc.text("Thank you for your business!", 105, currentY + 10, { align: "center" });
 
-      // Save PDF
-      doc.save(`Invoice_${invoice.id}.pdf`);
+      doc.save(`Invoice_${String(invoice.id).substring(0, 6)}.pdf`);
       
     } catch (error) {
       console.error("PDF Error: ", error);
@@ -205,10 +256,23 @@ const Invoices = () => {
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center space-x-2">
-        <FileText className="text-blue-600" size={24} />
-        <h1 className="text-2xl font-bold text-gray-800">Invoices</h1>
+      <div className="flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          <FileText className="text-blue-600" size={24} />
+          <h1 className="text-2xl font-bold text-gray-800">Invoices</h1>
+        </div>
+        {isProUser ? (
+          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">☁️ Cloud Sync</span>
+        ) : (
+          <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full">💾 Local</span>
+        )}
       </div>
+
+      {isMigrating && (
+        <div className="bg-blue-50 text-blue-700 p-3 rounded-lg text-sm font-medium animate-pulse">
+          Syncing your local invoices to the cloud. Please wait...
+        </div>
+      )}
 
       {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
@@ -224,10 +288,11 @@ const Invoices = () => {
           </thead>
           <tbody>
             {invoices.map(inv => {
-              const clientName = clients.find(c => c.id === Number(inv.clientId))?.name || 'Unknown';
+              const clientName = clients.find(c => String(c.id) === String(inv.clientId))?.name || 'Unknown';
+              const displayId = String(inv.id).substring(0, 6).toUpperCase();
               return (
                 <tr key={inv.id} className="border-b border-gray-50 hover:bg-gray-50">
-                  <td className="p-4 text-gray-600">#INV-{inv.id.toString().padStart(3, '0')}</td>
+                  <td className="p-4 text-gray-600 font-mono text-sm">#INV-{displayId}</td>
                   <td className="p-4 font-medium text-gray-800">{inv.dealTitle || 'Manual'}</td>
                   <td className="p-4 text-gray-600">{clientName}</td>
                   <td className="p-4 font-bold text-gray-800">${inv.amount}</td>
@@ -249,11 +314,12 @@ const Invoices = () => {
       {/* Mobile Card View */}
       <div className="md:hidden space-y-3">
         {invoices.map(inv => {
-          const clientName = clients.find(c => c.id === Number(inv.clientId))?.name || 'Unknown';
+          const clientName = clients.find(c => String(c.id) === String(inv.clientId))?.name || 'Unknown';
+          const displayId = String(inv.id).substring(0, 6).toUpperCase();
           return (
             <div key={inv.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-2">
               <div className="flex justify-between items-center">
-                <span className="text-sm text-gray-500 font-medium">#INV-{inv.id.toString().padStart(3, '0')}</span>
+                <span className="text-sm text-gray-500 font-mono">#INV-{displayId}</span>
                 <span className="font-bold text-gray-800 text-lg">${inv.amount}</span>
               </div>
               <div>

@@ -1,9 +1,16 @@
 import { useState } from 'react';
+import { useOutletContext } from 'react-router-dom'; // 👈 Pro status ke liye
 import { generateProposal } from './utils/pdf';
 import { db } from './db/schema'; 
 import { ArrowRight, FileText, User, ChevronDown, Search, CreditCard } from 'lucide-react';
+// Firebase imports (Profile aur Payment data cloud se lene ke liye)
+import { db as firestore } from './firebase'; 
+import { doc, getDoc } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 export default function Proposals() {
+  const { isProUser } = useOutletContext(); // 👈 Layout se Pro status lein
+  
   const [clientName, setClientName] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
   const [details, setDetails] = useState('');
@@ -15,9 +22,8 @@ export default function Proposals() {
   
   const [paymentMethod, setPaymentMethod] = useState('PayPal');
   const [cryptoNetwork, setCryptoNetwork] = useState(''); 
-  const [otherPaymentDetails, setOtherPaymentDetails] = useState(''); // 👈 Other Details ki state
+  const [otherPaymentDetails, setOtherPaymentDetails] = useState('');
 
-  // 🌍 Currencies List
   const currencies = [
     { code: 'USD', symbol: '$' }, { code: 'EUR', symbol: '€' }, { code: 'GBP', symbol: '£' },
     { code: 'AED', symbol: 'AED' }, { code: 'SAR', symbol: 'SAR' }, { code: 'PKR', symbol: 'Rs' },
@@ -60,26 +66,52 @@ export default function Proposals() {
     }
 
     let finalPaymentInfo = '';
-    
-    if (paymentMethod === 'Crypto') {
-      const profileData = await db.settings.get('profile');
-      const profile = profileData ? profileData.value : {};
+    let profile = null;
 
+    // 👇 DATA FETCHING LOGIC (Cloud vs Local)
+    try {
+      if (isProUser) {
+        // Pro user: Firebase se profile data lein
+        const auth = getAuth();
+        const user = auth.currentUser;
+        if (user) {
+          const docRef = doc(firestore, "settings", user.uid); // Agar settings cloud mein save ho rahi hain
+          const docSnap = await getDoc(docRef);
+          if (docSnap.exists()) {
+             profile = docSnap.data();
+          }
+        }
+      } else {
+        // Normal user: Local se profile lein
+        const profileData = await db.settings.get('profile');
+        profile = profileData ? profileData.value : null;
+      }
+    } catch (error) {
+      console.log("Error fetching profile data:", error);
+    }
+
+    // Crypto Validation
+    if (paymentMethod === 'Crypto') {
       if (!profile || !profile.cryptoAddress) {
         alert("❌ Error: You selected Crypto Payment, but your Wallet Address is missing in Settings.\n\nPlease go to Settings > Payment Accounts > Crypto and add your wallet address first.");
         return;
       }
-      finalPaymentInfo = cryptoNetwork; // Crypto network pass karein
-    } else if (paymentMethod === 'Other') {
+      finalPaymentInfo = cryptoNetwork;
+    } 
+    // Other Validation
+    else if (paymentMethod === 'Other') {
       if (!otherPaymentDetails) {
         alert("Please enter details for 'Other' payment method!");
         return;
       }
-      finalPaymentInfo = `Other: ${otherPaymentDetails}`; // 👈 Other ki detail pass karein
-    } else {
+      finalPaymentInfo = `Other: ${otherPaymentDetails}`;
+    } 
+    // Other Methods
+    else {
       finalPaymentInfo = paymentMethod; 
     }
 
+    // PDF Generate karein
     generateProposal(
         clientName, 
         projectTitle, 
@@ -98,11 +130,18 @@ export default function Proposals() {
   return (
     <div className="p-4 bg-slate-50 dark:bg-slate-900 min-h-screen transition-colors">
       
-      <div className="flex items-center gap-3 mb-6">
-        <div className="bg-blue-100 dark:bg-blue-900/30 p-2.5 rounded-xl text-blue-600 dark:text-blue-400">
-          <FileText size={24} />
+      <div className="flex items-center justify-between mb-6">
+        <div className="flex items-center gap-3">
+          <div className="bg-blue-100 dark:bg-blue-900/30 p-2.5 rounded-xl text-blue-600 dark:text-blue-400">
+            <FileText size={24} />
+          </div>
+          <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Create Proposal</h1>
         </div>
-        <h1 className="text-2xl font-bold text-slate-800 dark:text-white">Create Proposal</h1>
+        {isProUser ? (
+          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">☁️ Cloud Sync</span>
+        ) : (
+          <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full">💾 Local</span>
+        )}
       </div>
       
       <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm mb-6">
@@ -140,14 +179,13 @@ export default function Proposals() {
           <textarea placeholder="Describe the scope of work, deliverables, and terms..." className="w-full px-4 py-3 border border-slate-200 dark:border-slate-600 rounded-xl text-sm bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white h-28 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" value={details} onChange={(e) => setDetails(e.target.value)}></textarea>
         </div>
 
-        {/* 4. Amount & Currency (Searchable) */}
+        {/* 4. Amount & Currency */}
         <div className="mb-4">
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
             Total Budget <span className="text-red-500">*</span>
           </label>
           <div className="flex gap-2">
             
-            {/* Searchable Currency Dropdown */}
             <div className="w-1/3 relative">
               <button 
                 type="button" 
@@ -212,7 +250,7 @@ export default function Proposals() {
             <option value="Other">Other</option>
           </select>
 
-          {/* Agar Crypto select ho toh Network ka dropdown show karein */}
+          {/* Crypto Network */}
           {paymentMethod === 'Crypto' && (
             <div className="mt-3">
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Select Crypto Network</label>
@@ -229,7 +267,7 @@ export default function Proposals() {
             </div>
           )}
 
-          {/* 👈 Agar Other select ho toh Detail box show karein */}
+          {/* Other Details */}
           {paymentMethod === 'Other' && (
             <div className="mt-3">
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Specify Details</label>

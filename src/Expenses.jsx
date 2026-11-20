@@ -1,33 +1,130 @@
 import React, { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom'; // 👈 Pro status ke liye
 import { db } from './db/schema'; 
 import { Plus, Trash2, Receipt } from 'lucide-react';
+// Firebase imports
+import { db as firestore } from './firebase'; 
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const Expenses = () => {
+  const { isProUser } = useOutletContext(); // 👈 Layout se Pro status lein
   const [expenses, setExpenses] = useState([]);
   const [form, setForm] = useState({ title: '', amount: '', category: 'Software' });
+  const [userId, setUserId] = useState(null);
+  const [isMigrating, setIsMigrating] = useState(false);
 
-  useEffect(() => { loadExpenses(); }, []);
+  useEffect(() => {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) return;
 
-  const loadExpenses = async () => setExpenses(await db.expenses.toArray());
+    setUserId(user.uid);
+    let unsubscribeExpenses;
+
+    const initData = async () => {
+      if (isProUser) {
+        // Cloud Sync aur Migration
+        const qExpenses = query(collection(firestore, "expenses"), where("userId", "==", user.uid));
+        const expSnapshot = await getDocs(qExpenses);
+        
+        if (expSnapshot.empty) {
+          setIsMigrating(true);
+          const localExpenses = await db.expenses.toArray();
+          if (localExpenses.length > 0) {
+            for (const item of localExpenses) {
+              await addDoc(collection(firestore, "expenses"), {
+                ...item,
+                userId: user.uid,
+                createdAt: new Date().toISOString()
+              });
+            }
+            await db.expenses.clear(); // Local clear
+          }
+          setIsMigrating(false);
+        }
+
+        unsubscribeExpenses = onSnapshot(qExpenses, (snapshot) => {
+          setExpenses(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
+        });
+
+      } else {
+        loadLocalExpenses();
+      }
+    };
+
+    initData();
+
+    return () => {
+      if (unsubscribeExpenses) unsubscribeExpenses();
+    };
+  }, [isProUser]);
+
+  const loadLocalExpenses = async () => {
+    setExpenses(await db.expenses.toArray());
+  };
 
   const handleAdd = async (e) => {
     e.preventDefault();
-    await db.expenses.add({ ...form, amount: Number(form.amount), date: new Date().toISOString().split('T')[0] });
-    setForm({ title: '', amount: '', category: 'Software' });
-    loadExpenses();
+    
+    const newExpense = { 
+      ...form, 
+      amount: Number(form.amount), 
+      date: new Date().toISOString().split('T')[0] 
+    };
+
+    try {
+      if (isProUser) {
+        // Cloud mein save karein
+        await addDoc(collection(firestore, "expenses"), {
+          ...newExpense, 
+          userId: userId, 
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        // Local mein save karein
+        await db.expenses.add(newExpense);
+        loadLocalExpenses();
+      }
+      setForm({ title: '', amount: '', category: 'Software' });
+    } catch (error) {
+      console.error("Error adding expense: ", error);
+      alert("Failed to add expense.");
+    }
   };
 
   const handleDelete = async (id) => {
-    await db.expenses.delete(id);
-    loadExpenses();
+    try {
+      if (isProUser) {
+        await deleteDoc(doc(firestore, "expenses", id));
+      } else {
+        await db.expenses.delete(id);
+        loadLocalExpenses();
+      }
+    } catch (error) {
+      console.error("Error deleting expense: ", error);
+    }
   };
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
-      <div className="flex items-center space-x-2">
-        <Receipt className="text-blue-600" size={24} />
-        <h1 className="text-2xl font-bold text-gray-800">Expenses</h1>
+      <div className="flex justify-between items-center">
+        <div className="flex items-center space-x-2">
+          <Receipt className="text-blue-600" size={24} />
+          <h1 className="text-2xl font-bold text-gray-800">Expenses</h1>
+        </div>
+        {isProUser ? (
+          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">☁️ Cloud Sync</span>
+        ) : (
+          <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full">💾 Local</span>
+        )}
       </div>
+
+      {isMigrating && (
+        <div className="bg-blue-50 text-blue-700 p-3 rounded-lg text-sm font-medium animate-pulse">
+          Syncing your local expenses to the cloud. Please wait...
+        </div>
+      )}
 
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
         <form onSubmit={handleAdd} className="flex flex-col md:flex-row gap-3 md:gap-4 items-end">
