@@ -148,14 +148,36 @@ const Settings = () => {
         usedBy: currentUser.uid
       });
 
+      setIsProUser(true); 
+
       setStatusMessage({ 
-  type: "success", 
-  text: `Congratulations! You are now a Pro user. Your plan will expire on ${expiryDate.toLocaleDateString()}.` 
-});
+        type: "success", 
+        text: `Congratulations! You are now a Pro user. Your plan will expire on ${expiryDate.toLocaleDateString()}.` 
+      });
       
     } catch (error) {
       console.error("Activation error:", error);
       setStatusMessage({ type: "error", text: "Firebase Error: " + error.message });
+    }
+  };
+
+  // 👇 NAYA FUNCTION: Local Data Clear Karne Ke Liye
+  const handleClearLocalData = async () => {
+    if(window.confirm("Are you sure you want to delete all local data? This cannot be undone.")) {
+      try {
+        await db.clients.clear();
+        await db.deals.clear(); // Agar deals ka table hai
+        await db.proposals.clear(); // Agar proposals ka table hai
+        await db.invoices.clear();
+        await db.expenses.clear();
+        
+        // localStorage.clear(); // Agar aap login state bhi clear karna chahte hain (Optional)
+        
+        setStatusMessage({ type: "success", text: "Local data cleared successfully. Please refresh the page." });
+        setTimeout(() => window.location.reload(), 2000);
+      } catch (error) {
+        setStatusMessage({ type: "error", text: "Failed to clear local data." });
+      }
     }
   };
 
@@ -275,6 +297,15 @@ const Settings = () => {
             <button className="w-full bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2">
               <span>⬆️</span> <span>Import Backup</span>
             </button>
+
+            {/* 👇 YEH NAYA BUTTON HAI JIS SE LOCAL DATA CLEAR HOGA */}
+            <button 
+              onClick={handleClearLocalData}
+              className="w-full bg-red-50 border border-red-200 text-red-600 hover:bg-red-100 py-2 rounded-lg font-medium transition flex justify-center items-center space-x-2 mt-4"
+            >
+              <span>🗑️</span> <span>Clear Local Data (Danger)</span>
+            </button>
+
           </div>
         </div>
       )}
@@ -380,7 +411,7 @@ const Settings = () => {
             </div>
           )}
 
-          {paymentDetails.method === 'Bitcoin' && (
+                    {paymentDetails.method === 'Bitcoin' && (
             <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
               <label className="block text-sm font-medium text-gray-700 mb-1">Bitcoin (Mainnet) Wallet Address</label>
               <input type="text" value={paymentDetails.btcAddress || ''} onChange={(e) => setPaymentDetails({...paymentDetails, btcAddress: e.target.value})} className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Enter Bitcoin Address" />
@@ -400,8 +431,9 @@ const Settings = () => {
         </form>
       </div>
 
-        </div>
+    </div>
   );
 };
 
 export default Settings;
+           
