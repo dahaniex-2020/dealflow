@@ -11,11 +11,13 @@ const Clients = () => {
   const [clients, setClients] = useState([]);
   const [form, setForm] = useState({ name: '', email: '', company: '' });
   const [userId, setUserId] = useState(null);
-  const [isMigrating, setIsMigrating] = useState(false); // Migration status
+  const [isMigrating, setIsMigrating] = useState(false); 
 
   useEffect(() => {
     const auth = getAuth();
     const user = auth.currentUser;
+    
+    // Agar user login nahi hai toh wapas jao
     if (!user) return;
     
     setUserId(user.uid);
@@ -23,33 +25,33 @@ const Clients = () => {
 
     const initData = async () => {
       if (isProUser) {
-        // 1. Pehle check karein ke Cloud mein pehle se data hai ya nahi
+        // 👇 Yahan hum sirf current user ka data fetch kar rahe hain
         const q = query(collection(firestore, "clients"), where("userId", "==", user.uid));
         const cloudSnapshot = await getDocs(q);
         
-        // Agar Cloud khali hai, toh Local se data utha kar Cloud mein dalo (MIGRATION)
+        // 👇 Agar cloud khali hai, toh local data migrate karein (sirf usi user ka)
         if (cloudSnapshot.empty) {
           setIsMigrating(true);
+          
+          // Sirf current browser ka local data uthayen
           const localData = await db.clients.toArray();
           
           if (localData.length > 0) {
             for (const item of localData) {
-              // Cloud mein save karein
               await addDoc(collection(firestore, "clients"), {
                 name: item.name,
                 email: item.email,
                 company: item.company,
-                userId: user.uid,
+                userId: user.uid, // 👈 Migration ke waqt sahi UID lagayein
                 createdAt: new Date().toISOString()
               });
             }
-            // Migration ke baad local data saaf kar dein taake duplicate na ho
             await db.clients.clear();
           }
           setIsMigrating(false);
         }
 
-        // 2. Ab Cloud se Real-time data listen karein
+        // Real-time listener
         unsubscribe = onSnapshot(q, (snapshot) => {
           const clientsData = snapshot.docs.map(doc => ({
             id: doc.id,
@@ -58,7 +60,6 @@ const Clients = () => {
           setClients(clientsData);
         });
       } else {
-        // Normal User Logic (Local)
         loadLocalClients();
       }
     };
@@ -77,13 +78,14 @@ const Clients = () => {
 
   const handleAdd = async (e) => {
     e.preventDefault();
-    if(!form.name) return;
+    if(!form.name || !userId) return;
     
     try {
       if (isProUser) {
+        // Naya client add karte waqt current UID use karein
         await addDoc(collection(firestore, "clients"), {
           ...form,
-          userId: userId,
+          userId: userId, 
           createdAt: new Date().toISOString()
         });
       } else {
@@ -125,14 +127,12 @@ const Clients = () => {
         )}
       </div>
 
-      {/* Migration Alert */}
       {isMigrating && (
         <div className="bg-blue-50 text-blue-700 p-3 rounded-lg text-sm font-medium animate-pulse">
           Syncing your local data to the cloud. Please wait...
         </div>
       )}
 
-      {/* Add Form */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
         <form onSubmit={handleAdd} className="flex flex-col md:flex-row gap-3 md:gap-4">
           <input type="text" placeholder="Client Name *" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="w-full md:flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
@@ -142,7 +142,6 @@ const Clients = () => {
         </form>
       </div>
 
-      {/* Table and Cards (Waisa hi rahega) */}
       <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead className="bg-gray-50 border-b border-gray-100">
