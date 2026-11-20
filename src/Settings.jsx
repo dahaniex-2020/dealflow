@@ -80,22 +80,25 @@ const handleSaveProfile = async (e) => {
 const handleSavePayment = async (e) => {
   e.preventDefault();
   try {
+    console.log("User ID:", userId); 
+    console.log("Data to save:", paymentDetails); 
+    
     if (isProUser && userId) {
       await setDoc(doc(firestore, "payment_details", userId), paymentDetails);
+      console.log("Cloud save triggered!"); 
     } else {
       const dataToSave = { id: 'main_payment', ...paymentDetails };
       await db.payment_details.put(dataToSave);
+      console.log("Local save triggered!"); 
     }
+    
     setStatusMessage({ type: "success", text: "Payment details saved permanently!" });
     setTimeout(() => setStatusMessage({ type: "", text: "" }), 3000);
-  } catch (error) {
+  } catch (error) { // 👈 YEH CATCH MISS THA
     console.error("Save Error:", error);
     setStatusMessage({ type: "error", text: "Failed to save payment details." });
   }
-};
-
-const handleMethodChange = (e) => setPaymentDetails(prev => ({ ...prev, method: e.target.value }));
-
+}; // 👈 YEH CLOSING BRACKET MISS THA
 // Activation & Migration Logic
 const handleActivate = async () => {
   if (!licenseKey) return setStatusMessage({ type: "error", text: "Please enter a license key." });
