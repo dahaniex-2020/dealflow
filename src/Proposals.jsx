@@ -1,15 +1,14 @@
 import { useState } from 'react';
-import { useOutletContext } from 'react-router-dom'; // 👈 Pro status ke liye
+import { useOutletContext } from 'react-router-dom'; 
 import { generateProposal } from './utils/pdf';
 import { db } from './db/schema'; 
 import { ArrowRight, FileText, User, ChevronDown, Search, CreditCard } from 'lucide-react';
-// Firebase imports (Profile aur Payment data cloud se lene ke liye)
 import { db as firestore } from './firebase'; 
 import { doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 export default function Proposals() {
-  const { isProUser } = useOutletContext(); // 👈 Layout se Pro status lein
+  const { isProUser } = useOutletContext(); 
   
   const [clientName, setClientName] = useState('');
   const [projectTitle, setProjectTitle] = useState('');
@@ -68,37 +67,32 @@ export default function Proposals() {
     let finalPaymentInfo = '';
     let profile = null;
 
-    // 👇 DATA FETCHING LOGIC (Cloud vs Local)
     try {
       if (isProUser) {
-        // Pro user: Firebase se profile data lein
         const auth = getAuth();
         const user = auth.currentUser;
         if (user) {
-          const docRef = doc(firestore, "settings", user.uid); // Agar settings cloud mein save ho rahi hain
+          const docRef = doc(firestore, "settings", user.uid); 
           const docSnap = await getDoc(docRef);
           if (docSnap.exists()) {
              profile = docSnap.data();
           }
         }
       } else {
-        // Normal user: Local se profile lein
-        const profileData = await db.settings.get('profile');
-        profile = profileData ? profileData.value : null;
+        const profileData = await db.settings.get('company_profile'); // 👈 Yahan 'profile' ki jagah 'company_profile' kiya gaya hai
+        profile = profileData ? profileData : null;
       }
     } catch (error) {
       console.log("Error fetching profile data:", error);
     }
 
-    // Crypto Validation
     if (paymentMethod === 'Crypto') {
-      if (!profile || !profile.cryptoAddress) {
+      if (!profile || (!profile.usdtTrc20 && !profile.usdtBep20 && !profile.usdtErc20 && !profile.btcAddress)) {
         alert("❌ Error: You selected Crypto Payment, but your Wallet Address is missing in Settings.\n\nPlease go to Settings > Payment Accounts > Crypto and add your wallet address first.");
         return;
       }
       finalPaymentInfo = cryptoNetwork;
     } 
-    // Other Validation
     else if (paymentMethod === 'Other') {
       if (!otherPaymentDetails) {
         alert("Please enter details for 'Other' payment method!");
@@ -106,19 +100,19 @@ export default function Proposals() {
       }
       finalPaymentInfo = `Other: ${otherPaymentDetails}`;
     } 
-    // Other Methods
     else {
       finalPaymentInfo = paymentMethod; 
     }
 
-    // PDF Generate karein
+    // 👇 Yahan isProUser pass kiya gaya hai
     generateProposal(
         clientName, 
         projectTitle, 
         details, 
         amount, 
         currency, 
-        finalPaymentInfo
+        finalPaymentInfo,
+        isProUser // 👈 YEH ADD KAREIN
     );
   };
 
@@ -146,7 +140,6 @@ export default function Proposals() {
       
       <div className="bg-white dark:bg-slate-800 p-5 rounded-2xl border border-slate-200/80 dark:border-slate-700 shadow-sm mb-6">
         
-        {/* 1. Manual Client Name */}
         <div className="mb-4">
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
             Client Name <span className="text-red-500">*</span>
@@ -163,7 +156,6 @@ export default function Proposals() {
           </div>
         </div>
 
-        {/* 2. Project Title */}
         <div className="mb-4">
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
             Project Title <span className="text-red-500">*</span>
@@ -171,7 +163,6 @@ export default function Proposals() {
           <input type="text" placeholder="e.g. Website Redesign" className="w-full px-4 py-3 border border-slate-200 dark:border-slate-600 rounded-xl text-sm bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500" value={projectTitle} onChange={(e) => setProjectTitle(e.target.value)} />
         </div>
 
-        {/* 3. Details */}
         <div className="mb-4">
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
             Project Details
@@ -179,7 +170,6 @@ export default function Proposals() {
           <textarea placeholder="Describe the scope of work, deliverables, and terms..." className="w-full px-4 py-3 border border-slate-200 dark:border-slate-600 rounded-xl text-sm bg-slate-50 dark:bg-slate-900 text-slate-800 dark:text-white h-28 resize-none focus:outline-none focus:ring-2 focus:ring-blue-500" value={details} onChange={(e) => setDetails(e.target.value)}></textarea>
         </div>
 
-        {/* 4. Amount & Currency */}
         <div className="mb-4">
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
             Total Budget <span className="text-red-500">*</span>
@@ -230,7 +220,6 @@ export default function Proposals() {
           </div>
         </div>
 
-        {/* 5. Payment Method Section */}
         <div className="mb-6 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700">
           <label className="block text-sm font-semibold text-slate-700 dark:text-slate-300 mb-2 flex items-center gap-2">
             <CreditCard size={16} className="text-blue-500"/> Payment Method
@@ -250,7 +239,6 @@ export default function Proposals() {
             <option value="Other">Other</option>
           </select>
 
-          {/* Crypto Network */}
           {paymentMethod === 'Crypto' && (
             <div className="mt-3">
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Select Crypto Network</label>
@@ -267,7 +255,6 @@ export default function Proposals() {
             </div>
           )}
 
-          {/* Other Details */}
           {paymentMethod === 'Other' && (
             <div className="mt-3">
               <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 mb-1">Specify Details</label>
