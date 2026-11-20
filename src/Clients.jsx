@@ -1,33 +1,138 @@
 import React, { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import { db } from './db/schema'; 
 import { Trash2, Plus } from 'lucide-react';
+import { db as firestore } from './firebase'; 
+import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from "firebase/firestore";
+import { getAuth } from "firebase/auth";
 
 const Clients = () => {
+  const { isProUser } = useOutletContext(); 
   const [clients, setClients] = useState([]);
   const [form, setForm] = useState({ name: '', email: '', company: '' });
+  const [userId, setUserId] = useState(null);
+  const [isMigrating, setIsMigrating] = useState(false); // Migration status
 
-  useEffect(() => { loadClients(); }, []);
+  useEffect(() => {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) return;
+    
+    setUserId(user.uid);
+    let unsubscribe;
 
-  const loadClients = async () => setClients(await db.clients.toArray());
+    const initData = async () => {
+      if (isProUser) {
+        // 1. Pehle check karein ke Cloud mein pehle se data hai ya nahi
+        const q = query(collection(firestore, "clients"), where("userId", "==", user.uid));
+        const cloudSnapshot = await getDocs(q);
+        
+        // Agar Cloud khali hai, toh Local se data utha kar Cloud mein dalo (MIGRATION)
+        if (cloudSnapshot.empty) {
+          setIsMigrating(true);
+          const localData = await db.clients.toArray();
+          
+          if (localData.length > 0) {
+            for (const item of localData) {
+              // Cloud mein save karein
+              await addDoc(collection(firestore, "clients"), {
+                name: item.name,
+                email: item.email,
+                company: item.company,
+                userId: user.uid,
+                createdAt: new Date().toISOString()
+              });
+            }
+            // Migration ke baad local data saaf kar dein taake duplicate na ho
+            await db.clients.clear();
+          }
+          setIsMigrating(false);
+        }
+
+        // 2. Ab Cloud se Real-time data listen karein
+        unsubscribe = onSnapshot(q, (snapshot) => {
+          const clientsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
+          setClients(clientsData);
+        });
+      } else {
+        // Normal User Logic (Local)
+        loadLocalClients();
+      }
+    };
+
+    initData();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [isProUser]);
+
+  const loadLocalClients = async () => {
+    const localData = await db.clients.toArray();
+    setClients(localData);
+  };
 
   const handleAdd = async (e) => {
     e.preventDefault();
     if(!form.name) return;
-    await db.clients.add(form);
-    setForm({ name: '', email: '', company: '' });
-    loadClients();
+    
+    try {
+      if (isProUser) {
+        await addDoc(collection(firestore, "clients"), {
+          ...form,
+          userId: userId,
+          createdAt: new Date().toISOString()
+        });
+      } else {
+        await db.clients.add(form);
+        loadLocalClients();
+      }
+      setForm({ name: '', email: '', company: '' });
+    } catch (error) {
+      console.error("Error adding client: ", error);
+      alert("Failed to add client.");
+    }
   };
 
   const handleDelete = async (id) => {
-    await db.clients.delete(id);
-    loadClients();
+    try {
+      if (isProUser) {
+        await deleteDoc(doc(firestore, "clients", id));
+      } else {
+        await db.clients.delete(id);
+        loadLocalClients();
+      }
+    } catch (error) {
+      console.error("Error deleting client: ", error);
+    }
   };
 
   return (
     <div className="p-4 md:p-6 max-w-5xl mx-auto space-y-6">
-      <h1 className="text-2xl font-bold text-gray-800">Clients</h1>
+      <div className="flex justify-between items-center">
+        <h1 className="text-2xl font-bold text-gray-800">Clients</h1>
+        {isProUser ? (
+          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
+            ☁️ Cloud Sync Active
+          </span>
+        ) : (
+          <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full">
+            💾 Local Storage
+          </span>
+        )}
+      </div>
 
-      {/* Add Form - Mobile par vertically stack hoga */}
+      {/* Migration Alert */}
+      {isMigrating && (
+        <div className="bg-blue-50 text-blue-700 p-3 rounded-lg text-sm font-medium animate-pulse">
+          Syncing your local data to the cloud. Please wait...
+        </div>
+      )}
+
+      {/* Add Form */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
         <form onSubmit={handleAdd} className="flex flex-col md:flex-row gap-3 md:gap-4">
           <input type="text" placeholder="Client Name *" value={form.name} onChange={e => setForm({...form, name: e.target.value})} className="w-full md:flex-1 px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none" required />
@@ -37,7 +142,7 @@ const Clients = () => {
         </form>
       </div>
 
-      {/* Desktop Table View */}
+      {/* Table and Cards (Waisa hi rahega) */}
       <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -59,11 +164,15 @@ const Clients = () => {
                 </td>
               </tr>
             ))}
+            {clients.length === 0 && (
+              <tr>
+                <td colSpan="4" className="p-4 text-center text-gray-500">No clients found.</td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
-      {/* Mobile Card View */}
       <div className="md:hidden space-y-3">
         {clients.map(c => (
           <div key={c.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex justify-between items-start">
