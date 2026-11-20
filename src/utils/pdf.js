@@ -1,15 +1,14 @@
 import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
 import { db } from '../db/schema';
-// 👇 Firebase imports (Cloud data ke liye)
 import { db as firestore } from '../firebase'; 
 import { doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
 // ==========================================
-// SMART FETCH: Cloud ya Local se data lana
+// SMART FETCH: Cloud se pehle, phir Local se
 // ==========================================
-const getSmartProfileAndPayment = async (isProUser) => {
+const getSmartProfileAndPayment = async () => {
   let profile = { name: 'Freelancer', email: 'email@example.com', businessName: 'My Business', logo: null };
   let payment = null;
 
@@ -17,8 +16,8 @@ const getSmartProfileAndPayment = async (isProUser) => {
     const auth = getAuth();
     const user = auth.currentUser;
 
-    if (isProUser && user) {
-      // 🟢 PRO USER: Cloud se data lein
+    // 1. Pehle Cloud (Firebase) se data dhoondein
+    if (user) {
       const profileRef = doc(firestore, "settings", user.uid);
       const profileSnap = await getDoc(profileRef);
       if (profileSnap.exists()) profile = profileSnap.data();
@@ -26,18 +25,25 @@ const getSmartProfileAndPayment = async (isProUser) => {
       const payRef = doc(firestore, "payment_details", user.uid);
       const paySnap = await getDoc(payRef);
       if (paySnap.exists()) payment = paySnap.data();
-      
-    } else {
-      // 🟡 FREE USER: Local se data lein
-      const savedProfile = await db.settings.get('company_profile');
-      if (savedProfile) profile = { ...profile, ...savedProfile };
+    }
 
+    // 2. Agar Cloud mein nahi mila, toh Local se uthayen
+    if (!payment) {
       const savedPayment = await db.payment_details.get('main_payment');
       if (savedPayment) {
         const { id, ...rest } = savedPayment;
         payment = rest;
       }
     }
+    
+    if (!profile || !profile.businessName) {
+      const savedProfile = await db.settings.get('company_profile');
+      if (savedProfile) {
+        const { id, ...rest } = savedProfile;
+        profile = { ...profile, ...rest };
+      }
+    }
+
   } catch (err) {
     console.log("Error fetching data:", err);
   }
@@ -53,9 +59,9 @@ const getSymbol = (curr) => {
 // ==========================================
 // 1. INVOICE PDF GENERATOR
 // ==========================================
-export const generateInvoice = async (deal, client, amount, isProUser) => {
+export const generateInvoice = async (deal, client, amount) => {
   try {
-    const { profile, payment } = await getSmartProfileAndPayment(isProUser);
+    const { profile, payment } = await getSmartProfileAndPayment();
     
     const doc = new jsPDF();
     const currencySymbol = getSymbol(deal.currency || 'USD');
@@ -171,7 +177,6 @@ export const generateInvoice = async (deal, client, amount, isProUser) => {
       else if (method.includes('Other')) paymentDetailText = `Details: ${payment.bankDetails || 'N/A'}`;
     }
 
-    // Agar payment details mil gayi hain toh box banayein
     if (paymentDetailText) {
       doc.setDrawColor(226, 232, 240); 
       doc.setFillColor(255, 255, 255);
@@ -188,7 +193,6 @@ export const generateInvoice = async (deal, client, amount, isProUser) => {
       const splitText = doc.splitTextToSize(paymentDetailText, 170);
       doc.text(splitText, 18, currentY + 15);
     } else {
-      // Agar missing hai toh Red Warning
       doc.setFillColor(254, 242, 242); 
       doc.setDrawColor(252, 165, 165);
       doc.roundedRect(14, currentY, 182, 24, 3, 3, 'FD'); 
@@ -222,9 +226,9 @@ export const generateInvoice = async (deal, client, amount, isProUser) => {
 // ==========================================
 // 2. PROPOSAL PDF GENERATOR
 // ==========================================
-export const generateProposal = async (clientName, projectTitle, details, amount, currency = 'USD', paymentMethod = '', isProUser) => {
+export const generateProposal = async (clientName, projectTitle, details, amount, currency = 'USD', paymentMethod = '') => {
   try {
-    const { profile, payment } = await getSmartProfileAndPayment(isProUser);
+    const { profile, payment } = await getSmartProfileAndPayment();
     
     const doc = new jsPDF();
     const currencySymbol = getSymbol(currency);

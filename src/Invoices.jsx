@@ -86,9 +86,6 @@ const Invoices = () => {
     }
   };
 
-  // ==========================================
-  // PREMIUM PDF GENERATOR FUNCTION
-  // ==========================================
   const downloadPDF = async (invoice) => {
     try {
       const client = clients.find(c => String(c.id) === String(invoice.clientId));
@@ -96,7 +93,6 @@ const Invoices = () => {
       let company = null;
       let savedPayment = null;
 
-      // 👇 SMART FETCH LOGIC
       try {
         const auth = getAuth();
         const user = auth.currentUser;
@@ -132,7 +128,6 @@ const Invoices = () => {
       
       const doc = new jsPDF();
       
-      // Top Blue Bar
       doc.setFillColor(37, 99, 235); 
       doc.rect(0, 0, 210, 8, 'F'); 
       
@@ -219,11 +214,9 @@ const Invoices = () => {
       doc.setFont("helvetica", "bold");
       doc.text(`$${Number(invoice.amount).toLocaleString()}`, 190, finalY + 13, { align: "right" });
 
-      // ==========================================
-      // PAYMENT DETAILS SECTION
-      // ==========================================
       let currentY = finalY + 35; 
 
+      // Payment Details Section
       if (savedPayment && invoice.paymentMethod) {
         doc.setFillColor(255, 255, 255);
         doc.setDrawColor(226, 232, 240);

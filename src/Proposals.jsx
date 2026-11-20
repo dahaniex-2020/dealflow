@@ -68,18 +68,17 @@ export default function Proposals() {
     let profile = null;
 
     try {
-      if (isProUser) {
-        const auth = getAuth();
-        const user = auth.currentUser;
-        if (user) {
-          const docRef = doc(firestore, "settings", user.uid); 
-          const docSnap = await getDoc(docRef);
-          if (docSnap.exists()) {
-             profile = docSnap.data();
-          }
+      const auth = getAuth();
+      const user = auth.currentUser;
+
+      if (isProUser && user) {
+        const docRef = doc(firestore, "settings", user.uid); 
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+           profile = docSnap.data();
         }
       } else {
-        const profileData = await db.settings.get('company_profile'); // 👈 Yahan 'profile' ki jagah 'company_profile' kiya gaya hai
+        const profileData = await db.settings.get('company_profile'); 
         profile = profileData ? profileData : null;
       }
     } catch (error) {
@@ -104,15 +103,14 @@ export default function Proposals() {
       finalPaymentInfo = paymentMethod; 
     }
 
-    // 👇 Yahan isProUser pass kiya gaya hai
+    // 👇 isProUser hata diya gaya hai kyunke utils/pdf.js khud check karega
     generateProposal(
         clientName, 
         projectTitle, 
         details, 
         amount, 
         currency, 
-        finalPaymentInfo,
-        isProUser // 👈 YEH ADD KAREIN
+        finalPaymentInfo
     );
   };
 
