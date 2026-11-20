@@ -1,12 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom'; // 👈 Pro status ke liye
+import { useOutletContext } from 'react-router-dom';
 import { db } from './db/schema'; 
 import { Trash2, Plus } from 'lucide-react';
-// Firebase imports
-import { db as firestore } from './firebase'; 
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, where, getDocs } from "firebase/firestore";
+import { collection, addDoc, deleteDoc, onSnapshot, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
-
+import { db as firestore } from './firebase';
 const Deals = () => {
   const { isProUser } = useOutletContext(); 
   const [deals, setDeals] = useState([]);
