@@ -97,27 +97,67 @@ const Deals = () => {
     }
 
     try {
-      const savedPaymentData = await db.payment_details.get('main_payment');
-      
-      if (!savedPaymentData) {
-        return alert("⚠️ Notification: You haven't saved any Payment Method in Settings yet. Please go to Settings > Payment Accounts and save your details first.");
-      }
-
-      // Payment method validation (same as before)
-      if (form.paymentMethod === 'PayPal' && !savedPaymentData.paypalUSD) return alert("⚠️ PayPal details not saved.");
-      if (form.paymentMethod === 'Zelle' && !savedPaymentData.zelleDetails) return alert("⚠️ Zelle details not saved.");
-      if (form.paymentMethod === 'Wise' && !savedPaymentData.wiseDetails) return alert("⚠️ Wise details not saved.");
-      if (form.paymentMethod === 'Payoneer' && !savedPaymentData.payoneerDetails) return alert("⚠️ Payoneer details not saved.");
-      if (form.paymentMethod === 'Bank Transfer' && !savedPaymentData.bankDetails) return alert("⚠️ Bank details not saved.");
-      if (form.paymentMethod === 'Credit Card' && !savedPaymentData.cardNumber) return alert("⚠️ Card details not saved.");
-      if (form.paymentMethod === 'USDT' && !savedPaymentData.usdtTrc20 && !savedPaymentData.usdtBep20 && !savedPaymentData.usdtErc20) return alert("⚠️ USDT details not saved.");
-      if (form.paymentMethod === 'Bitcoin' && !savedPaymentData.btcAddress) return alert("⚠️ Bitcoin details not saved.");
-      if (form.paymentMethod === 'Other' && !savedPaymentData.bankDetails) return alert("⚠️ Other details not saved.");
-
-    } catch (error) {
-      console.log("Validation error:", error);
-      return alert("System Error while checking payment methods.");
+  let savedPaymentData = null;
+  
+  // 👇 Check karein ke user Pro hai ya Free, aur wahan se data uthayen
+  if (isProUser) {
+    // Pro User: Cloud (Firebase) se data lein
+    const payRef = doc(firestore, "payment_details", userId);
+    const paySnap = await getDoc(payRef);
+    if (paySnap.exists()) {
+      savedPaymentData = paySnap.data();
     }
+  } else {
+    // Free User: Local se data lein
+    savedPaymentData = await db.payment_details.get('main_payment');
+  }
+  
+  // Agar data bilkul hi nahi mila
+  if (!savedPaymentData) {
+    return alert("⚠️ Notification: You haven't saved any Payment Method in Settings yet. Please go to Settings > Payment Accounts and save your details first.");
+  }
+
+  // Ab aage ke checks waisay hi rahenge...
+  if (form.paymentMethod === 'PayPal' && !savedPaymentData.paypalUSD) {
+    return alert("⚠️ Notification: Your PayPal (USD) details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  if (form.paymentMethod === 'Zelle' && !savedPaymentData.zelleDetails) {
+    return alert("⚠️ Notification: Your Zelle details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  if (form.paymentMethod === 'Wise' && !savedPaymentData.wiseDetails) {
+    return alert("⚠️ Notification: Your Wise details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  if (form.paymentMethod === 'Payoneer' && !savedPaymentData.payoneerDetails) {
+    return alert("⚠️ Notification: Your Payoneer details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  if (form.paymentMethod === 'Bank Transfer' && !savedPaymentData.bankDetails) {
+    return alert("⚠️ Notification: Your Bank Account details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  if (form.paymentMethod === 'Credit Card' && !savedPaymentData.cardNumber) {
+    return alert("⚠️ Notification: Your Credit Card details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  
+  // USDT Check
+  if (form.paymentMethod === 'USDT') {
+    if (!savedPaymentData.usdtTrc20 && !savedPaymentData.usdtBep20 && !savedPaymentData.usdtErc20) {
+      return alert("⚠️ Notification: Your USDT Wallet Address is not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+    }
+  }
+  
+  // Bitcoin Check
+  if (form.paymentMethod === 'Bitcoin' && !savedPaymentData.btcAddress) {
+    return alert("⚠️ Notification: Your Bitcoin Wallet Address is not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+  
+  // Other Check
+  if (form.paymentMethod === 'Other' && !savedPaymentData.bankDetails) {
+    return alert("⚠️ Notification: Your 'Other' payment details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
+  }
+
+} catch (error) {
+  console.log("Validation error:", error);
+  return alert("System Error while checking payment methods.");
+}
 
     let finalPaymentMethod = form.paymentMethod;
     if (form.cryptoNetwork) {
