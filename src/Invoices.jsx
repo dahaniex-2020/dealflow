@@ -86,6 +86,9 @@ const Invoices = () => {
     }
   };
 
+  // ==========================================
+  // PREMIUM PDF GENERATOR FUNCTION
+  // ==========================================
   const downloadPDF = async (invoice) => {
     try {
       const client = clients.find(c => String(c.id) === String(invoice.clientId));
@@ -93,14 +96,17 @@ const Invoices = () => {
       let company = null;
       let savedPayment = null;
 
-      // 👇 SMART FETCH LOGIC (Cloud se pehle, phir Local)
+      // 👇 SMART FETCH LOGIC
       try {
-        if (isProUser && userId) {
-          const companyRef = doc(firestore, "settings", userId);
+        const auth = getAuth();
+        const user = auth.currentUser;
+        
+        if (isProUser && user) {
+          const companyRef = doc(firestore, "settings", user.uid);
           const companySnap = await getDoc(companyRef);
           if (companySnap.exists()) company = companySnap.data();
 
-          const paymentRef = doc(firestore, "payment_details", userId);
+          const paymentRef = doc(firestore, "payment_details", user.uid);
           const paymentSnap = await getDoc(paymentRef);
           if (paymentSnap.exists()) savedPayment = paymentSnap.data();
         } 
@@ -150,13 +156,11 @@ const Invoices = () => {
       doc.setFont("helvetica", "normal");
       doc.text(company?.email || "support@dealflow.com", 15, yPos + 7);
 
-      // "INVOICE" Watermark
       doc.setFontSize(30);
       doc.setTextColor(226, 232, 240); 
       doc.setFont("helvetica", "bold");
       doc.text("INVOICE", 195, 30, { align: "right" });
 
-      // Invoice Details & Billed To
       doc.setFontSize(12);
       doc.setTextColor(37, 99, 235); 
       doc.text("Billed To:", 15, yPos + 30);
@@ -184,7 +188,6 @@ const Invoices = () => {
       doc.text(`#INV-${displayId}`, 160, yPos + 38);
       doc.text(`${invoice.date}`, 160, yPos + 44);
 
-      // Table
       autoTable(doc, {
         startY: yPos + 65, 
         margin: { left: 15, right: 15 },
@@ -217,7 +220,7 @@ const Invoices = () => {
       doc.text(`$${Number(invoice.amount).toLocaleString()}`, 190, finalY + 13, { align: "right" });
 
       // ==========================================
-      // PAYMENT DETAILS SECTION (CRITICAL)
+      // PAYMENT DETAILS SECTION
       // ==========================================
       let currentY = finalY + 35; 
 
@@ -259,7 +262,6 @@ const Invoices = () => {
         
         currentY += 35; 
       } else {
-        // Warning if details are missing
         doc.setFillColor(254, 242, 242); 
         doc.setDrawColor(252, 165, 165); 
         doc.roundedRect(15, currentY, 180, 25, 3, 3, 'FD'); 
@@ -309,7 +311,6 @@ const Invoices = () => {
         </div>
       )}
 
-      {/* Desktop Table View */}
       <div className="hidden md:block bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
         <table className="w-full text-left border-collapse">
           <thead className="bg-gray-50 border-b border-gray-100">
@@ -346,7 +347,6 @@ const Invoices = () => {
         </table>
       </div>
 
-      {/* Mobile Card View */}
       <div className="md:hidden space-y-3">
         {invoices.map(inv => {
           const clientName = clients.find(c => String(c.id) === String(inv.clientId))?.name || 'Unknown';
