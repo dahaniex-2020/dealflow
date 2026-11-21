@@ -13,16 +13,22 @@ const getSmartProfileAndPayment = async () => {
     const auth = getAuth();
     const user = auth.currentUser;
 
+    // 👇 Pehle Cloud (Firebase) se data check karein (Pro users ke liye)
     if (user) {
       const profileRef = doc(firestore, "settings", user.uid);
       const profileSnap = await getDoc(profileRef);
-      if (profileSnap.exists()) profile = profileSnap.data();
+      if (profileSnap.exists()) {
+        profile = profileSnap.data();
+      }
 
       const payRef = doc(firestore, "payment_details", user.uid);
       const paySnap = await getDoc(payRef);
-      if (paySnap.exists()) payment = paySnap.data();
+      if (paySnap.exists()) {
+        payment = paySnap.data();
+      }
     }
 
+    // 👇 Agar Cloud mein na mile, toh Local se uthayen
     if (!payment) {
       const savedPayment = await db.payment_details.get('main_payment');
       if (savedPayment) {
