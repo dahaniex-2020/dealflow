@@ -1,51 +1,66 @@
 import React, { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
-import { db } from './db/schema'; 
-import { Trash2, Plus } from 'lucide-react';
+import { db } from './db/schema';
+import { Trash2, Plus, Search } from 'lucide-react';
 import { collection, addDoc, deleteDoc, onSnapshot, query, where, getDocs, doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { db as firestore } from './firebase';
+
 const Deals = () => {
-  const { isProUser } = useOutletContext(); 
+  const { isProUser } = useOutletContext();
   const [deals, setDeals] = useState([]);
   const [clients, setClients] = useState([]);
   const [userId, setUserId] = useState(null);
   const [isMigrating, setIsMigrating] = useState(false);
-  
-  const [form, setForm] = useState({ 
-    title: '', 
-    clientId: '', 
-    value: '', 
-    stage: 'New', 
-    paymentMethod: 'PayPal', 
-    cryptoNetwork: '' 
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const [form, setForm] = useState({
+    title: '',
+    clientId: '',
+    value: '',
+    stage: 'New',
+    paymentMethod: 'PayPal',
+    cryptoNetwork: ''
   });
 
   useEffect(() => {
     const auth = getAuth();
     const user = auth.currentUser;
     if (!user) return;
-    
+
     setUserId(user.uid);
     let unsubscribeDeals;
     let unsubscribeClients;
 
     const initData = async () => {
       if (isProUser) {
-        // 1. Clients fetch karein (Dropdown ke liye)
-        const qClients = query(collection(firestore, "clients"), where("userId", "==", user.uid));
+        // 1. Clients fetch (Dropdown)
+        const qClients = query(
+          collection(firestore, "clients"),
+          where("userId", "==", user.uid)
+        );
+
         unsubscribeClients = onSnapshot(qClients, (snapshot) => {
-          const clientsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const clientsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
           setClients(clientsData);
         });
 
-        // 2. Deals Migration aur Listener
-        const qDeals = query(collection(firestore, "deals"), where("userId", "==", user.uid));
+        // 2. Deals Migration and Listener
+        const qDeals = query(
+          collection(firestore, "deals"),
+          where("userId", "==", user.uid)
+        );
+
         const dealsSnapshot = await getDocs(qDeals);
-        
+
         if (dealsSnapshot.empty) {
           setIsMigrating(true);
+
           const localDeals = await db.deals.toArray();
+
           if (localDeals.length > 0) {
             for (const item of localDeals) {
               await addDoc(collection(firestore, "deals"), {
@@ -54,18 +69,22 @@ const Deals = () => {
                 createdAt: new Date().toISOString()
               });
             }
+
             await db.deals.clear();
           }
+
           setIsMigrating(false);
         }
 
         unsubscribeDeals = onSnapshot(qDeals, (snapshot) => {
-          const dealsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+          const dealsData = snapshot.docs.map(doc => ({
+            id: doc.id,
+            ...doc.data()
+          }));
           setDeals(dealsData);
         });
 
       } else {
-        // Normal User Logic
         loadLocalData();
       }
     };
@@ -84,86 +103,135 @@ const Deals = () => {
   };
 
   const handleMethodChange = (e) => {
-    setForm({ ...form, paymentMethod: e.target.value, cryptoNetwork: '' });
+    setForm({
+      ...form,
+      paymentMethod: e.target.value,
+      cryptoNetwork: ''
+    });
   };
+
+  // 🔍 Search deals by Title, Client, Value or Payment Method
+  const filteredDeals = deals.filter((d) => {
+    const clientName =
+      clients.find(c => String(c.id) === String(d.clientId))?.name || 'Unknown';
+
+    const search = searchTerm.trim().toLowerCase();
+
+    return (
+      (d.title || '').toLowerCase().includes(search) ||
+      clientName.toLowerCase().includes(search) ||
+      String(d.value ?? '').toLowerCase().includes(search) ||
+      (d.paymentMethod || '').toLowerCase().includes(search)
+    );
+  });
 
   const handleAdd = async (e) => {
     e.preventDefault();
-    
-    if ((form.paymentMethod === 'USDT' || form.paymentMethod === 'Bitcoin') && !form.cryptoNetwork) {
+
+    if (
+      (form.paymentMethod === 'USDT' || form.paymentMethod === 'Bitcoin') &&
+      !form.cryptoNetwork
+    ) {
       return alert("Please select a crypto network!");
     }
 
     try {
-  let savedPaymentData = null;
-  
-  // 👇 Check karein ke user Pro hai ya Free, aur wahan se data uthayen
-  if (isProUser) {
-    // Pro User: Cloud (Firebase) se data lein
-    const payRef = doc(firestore, "payment_details", userId);
-    const paySnap = await getDoc(payRef);
-    if (paySnap.exists()) {
-      savedPaymentData = paySnap.data();
-    }
-  } else {
-    // Free User: Local se data lein
-    savedPaymentData = await db.payment_details.get('main_payment');
-  }
-  
-  // Agar data bilkul hi nahi mila
-  if (!savedPaymentData) {
-    return alert("⚠️ Notification: You haven't saved any Payment Method in Settings yet. Please go to Settings > Payment Accounts and save your details first.");
-  }
+      let savedPaymentData = null;
 
-  // Ab aage ke checks waisay hi rahenge...
-  if (form.paymentMethod === 'PayPal' && !savedPaymentData.paypalUSD) {
-    return alert("⚠️ Notification: Your PayPal (USD) details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  if (form.paymentMethod === 'Zelle' && !savedPaymentData.zelleDetails) {
-    return alert("⚠️ Notification: Your Zelle details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  if (form.paymentMethod === 'Wise' && !savedPaymentData.wiseDetails) {
-    return alert("⚠️ Notification: Your Wise details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  if (form.paymentMethod === 'Payoneer' && !savedPaymentData.payoneerDetails) {
-    return alert("⚠️ Notification: Your Payoneer details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  if (form.paymentMethod === 'Bank Transfer' && !savedPaymentData.bankDetails) {
-    return alert("⚠️ Notification: Your Bank Account details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  if (form.paymentMethod === 'Credit Card' && !savedPaymentData.cardNumber) {
-    return alert("⚠️ Notification: Your Credit Card details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  
-  // USDT Check
-  if (form.paymentMethod === 'USDT') {
-    if (!savedPaymentData.usdtTrc20 && !savedPaymentData.usdtBep20 && !savedPaymentData.usdtErc20) {
-      return alert("⚠️ Notification: Your USDT Wallet Address is not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-    }
-  }
-  
-  // Bitcoin Check
-  if (form.paymentMethod === 'Bitcoin' && !savedPaymentData.btcAddress) {
-    return alert("⚠️ Notification: Your Bitcoin Wallet Address is not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
-  
-  // Other Check
-  if (form.paymentMethod === 'Other' && !savedPaymentData.bankDetails) {
-    return alert("⚠️ Notification: Your 'Other' payment details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first.");
-  }
+      // Check saved payment details
+      if (isProUser) {
+        const payRef = doc(firestore, "payment_details", userId);
+        const paySnap = await getDoc(payRef);
 
-} catch (error) {
-  console.log("Validation error:", error);
-  return alert("System Error while checking payment methods.");
-}
+        if (paySnap.exists()) {
+          savedPaymentData = paySnap.data();
+        }
+      } else {
+        savedPaymentData = await db.payment_details.get('main_payment');
+      }
+
+      if (!savedPaymentData) {
+        return alert(
+          "⚠️ Notification: You haven't saved any Payment Method in Settings yet. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      if (form.paymentMethod === 'PayPal' && !savedPaymentData.paypalUSD) {
+        return alert(
+          "⚠️ Notification: Your PayPal (USD) details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      if (form.paymentMethod === 'Zelle' && !savedPaymentData.zelleDetails) {
+        return alert(
+          "⚠️ Notification: Your Zelle details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      if (form.paymentMethod === 'Wise' && !savedPaymentData.wiseDetails) {
+        return alert(
+          "⚠️ Notification: Your Wise details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      if (form.paymentMethod === 'Payoneer' && !savedPaymentData.payoneerDetails) {
+        return alert(
+          "⚠️ Notification: Your Payoneer details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      if (form.paymentMethod === 'Bank Transfer' && !savedPaymentData.bankDetails) {
+        return alert(
+          "⚠️ Notification: Your Bank Account details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      if (form.paymentMethod === 'Credit Card' && !savedPaymentData.cardNumber) {
+        return alert(
+          "⚠️ Notification: Your Credit Card details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      // USDT Check
+      if (form.paymentMethod === 'USDT') {
+        if (
+          !savedPaymentData.usdtTrc20 &&
+          !savedPaymentData.usdtBep20 &&
+          !savedPaymentData.usdtErc20
+        ) {
+          return alert(
+            "⚠️ Notification: Your USDT Wallet Address is not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+          );
+        }
+      }
+
+      // Bitcoin Check
+      if (form.paymentMethod === 'Bitcoin' && !savedPaymentData.btcAddress) {
+        return alert(
+          "⚠️ Notification: Your Bitcoin Wallet Address is not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+      // Other Check
+      if (form.paymentMethod === 'Other' && !savedPaymentData.bankDetails) {
+        return alert(
+          "⚠️ Notification: Your 'Other' payment details are not saved in Settings. Please go to Settings > Payment Accounts and save your details first."
+        );
+      }
+
+    } catch (error) {
+      console.log("Validation error:", error);
+      return alert("System Error while checking payment methods.");
+    }
 
     let finalPaymentMethod = form.paymentMethod;
+
     if (form.cryptoNetwork) {
       finalPaymentMethod = `${form.paymentMethod} (${form.cryptoNetwork})`;
     }
 
-    const newDealData = { 
-      ...form, 
+    const newDealData = {
+      ...form,
       value: Number(form.value),
       paymentMethod: finalPaymentMethod
     };
@@ -172,8 +240,8 @@ const Deals = () => {
       clientId: form.clientId,
       amount: Number(form.value),
       status: 'Unpaid',
-      dealTitle: form.title, 
-      paymentMethod: finalPaymentMethod, 
+      dealTitle: form.title,
+      paymentMethod: finalPaymentMethod,
       date: new Date().toISOString().split('T')[0]
     };
 
@@ -181,10 +249,15 @@ const Deals = () => {
       if (isProUser) {
         // Save to Firebase
         await addDoc(collection(firestore, "deals"), {
-          ...newDealData, userId: userId, createdAt: new Date().toISOString()
+          ...newDealData,
+          userId: userId,
+          createdAt: new Date().toISOString()
         });
+
         await addDoc(collection(firestore, "invoices"), {
-          ...newInvoiceData, userId: userId, createdAt: new Date().toISOString()
+          ...newInvoiceData,
+          userId: userId,
+          createdAt: new Date().toISOString()
         });
       } else {
         // Save to Local
@@ -193,7 +266,15 @@ const Deals = () => {
         loadLocalData();
       }
 
-      setForm({ title: '', clientId: '', value: '', stage: 'New', paymentMethod: 'PayPal', cryptoNetwork: '' });
+      setForm({
+        title: '',
+        clientId: '',
+        value: '',
+        stage: 'New',
+        paymentMethod: 'PayPal',
+        cryptoNetwork: ''
+      });
+
       alert("✅ Deal Created & Invoice Generated Automatically!");
 
     } catch (error) {
@@ -217,12 +298,18 @@ const Deals = () => {
 
   return (
     <div className="p-4 md:p-6 max-w-6xl mx-auto space-y-6">
+
       <div className="flex justify-between items-center">
         <h1 className="text-2xl font-bold text-gray-800">Deals</h1>
+
         {isProUser ? (
-          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">☁️ Cloud Sync Active</span>
+          <span className="bg-green-100 text-green-700 text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1">
+            ☁️ Cloud Sync Active
+          </span>
         ) : (
-          <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full">💾 Local Storage</span>
+          <span className="bg-yellow-100 text-yellow-700 text-xs font-bold px-3 py-1 rounded-full">
+            💾 Local Storage
+          </span>
         )}
       </div>
 
@@ -232,19 +319,45 @@ const Deals = () => {
         </div>
       )}
 
+      {/* Add Deal Form */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100">
         <form onSubmit={handleAdd} className="flex flex-col md:flex-row gap-3 md:gap-4">
-          
-          <input type="text" placeholder="Deal Title" value={form.title} onChange={e => setForm({...form, title: e.target.value})} className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none" required />
-          
-          <select value={form.clientId} onChange={e => setForm({...form, clientId: e.target.value})} className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none bg-white" required>
+
+          <input
+            type="text"
+            placeholder="Deal Title"
+            value={form.title}
+            onChange={e => setForm({ ...form, title: e.target.value })}
+            className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none"
+            required
+          />
+
+          <select
+            value={form.clientId}
+            onChange={e => setForm({ ...form, clientId: e.target.value })}
+            className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none bg-white"
+            required
+          >
             <option value="">Select Client</option>
-            {clients.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+            {clients.map(c => (
+              <option key={c.id} value={c.id}>{c.name}</option>
+            ))}
           </select>
 
-          <input type="number" placeholder="Value ($)" value={form.value} onChange={e => setForm({...form, value: e.target.value})} className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none" required />
-          
-          <select value={form.paymentMethod} onChange={handleMethodChange} className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none bg-white">
+          <input
+            type="number"
+            placeholder="Value ($)"
+            value={form.value}
+            onChange={e => setForm({ ...form, value: e.target.value })}
+            className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none"
+            required
+          />
+
+          <select
+            value={form.paymentMethod}
+            onChange={handleMethodChange}
+            className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none bg-white"
+          >
             <option value="PayPal">PayPal</option>
             <option value="Bank Transfer">Bank Transfer</option>
             <option value="Credit Card">Credit Card</option>
@@ -257,8 +370,14 @@ const Deals = () => {
           </select>
 
           {(form.paymentMethod === 'USDT' || form.paymentMethod === 'Bitcoin') && (
-            <select value={form.cryptoNetwork} onChange={e => setForm({...form, cryptoNetwork: e.target.value})} className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none bg-blue-50 border-blue-300 text-blue-800" required>
+            <select
+              value={form.cryptoNetwork}
+              onChange={e => setForm({ ...form, cryptoNetwork: e.target.value })}
+              className="w-full md:flex-1 px-3 py-2 border rounded-lg outline-none bg-blue-50 border-blue-300 text-blue-800"
+              required
+            >
               <option value="">Select Network</option>
+
               {form.paymentMethod === 'USDT' ? (
                 <>
                   <option value="TRC20">TRC20</option>
@@ -270,11 +389,27 @@ const Deals = () => {
               )}
             </select>
           )}
-          
-          <button type="submit" className="w-full md:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2">
+
+          <button
+            type="submit"
+            className="w-full md:w-auto bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 flex items-center justify-center gap-2"
+          >
             <Plus size={18} /> Add Deal
           </button>
         </form>
+      </div>
+
+      {/* 🔍 Search Deals */}
+      <div className="relative">
+        <Search size={20} className="absolute left-3 top-3 text-gray-400" />
+
+        <input
+          type="text"
+          placeholder="Search by deal, client, value or payment method..."
+          value={searchTerm}
+          onChange={e => setSearchTerm(e.target.value)}
+          className="w-full pl-10 pr-4 py-3 bg-white border border-gray-200 rounded-xl shadow-sm focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm"
+        />
       </div>
 
       {/* Table for Desktop */}
@@ -289,49 +424,90 @@ const Deals = () => {
               <th className="p-4 font-medium text-gray-600 text-right">Action</th>
             </tr>
           </thead>
+
           <tbody>
-            {deals.map(d => {
-              // Yahan client find karte waqt String compare karein kyunke Firebase IDs string hoti hain
-              const clientName = clients.find(c => String(c.id) === String(d.clientId))?.name || 'Unknown';
+            {filteredDeals.map(d => {
+              const clientName =
+                clients.find(c => String(c.id) === String(d.clientId))?.name || 'Unknown';
+
               return (
                 <tr key={d.id} className="border-b border-gray-50 hover:bg-gray-50">
                   <td className="p-4 font-medium text-gray-800">{d.title}</td>
                   <td className="p-4 text-gray-600">{clientName}</td>
                   <td className="p-4 font-bold text-green-600">${d.value}</td>
-                  <td className="p-4 text-gray-600"><span className="bg-gray-100 px-2 py-1 rounded text-xs font-medium">{d.paymentMethod || 'N/A'}</span></td>
+                  <td className="p-4 text-gray-600">
+                    <span className="bg-gray-100 px-2 py-1 rounded text-xs font-medium">
+                      {d.paymentMethod || 'N/A'}
+                    </span>
+                  </td>
+
                   <td className="p-4 text-right">
-                    <button onClick={() => handleDelete(d.id)} className="text-red-500 hover:text-red-700 p-2"><Trash2 size={18} /></button>
+                    <button
+                      onClick={() => handleDelete(d.id)}
+                      className="text-red-500 hover:text-red-700 p-2"
+                    >
+                      <Trash2 size={18} />
+                    </button>
                   </td>
                 </tr>
               );
             })}
+
+            {filteredDeals.length === 0 && (
+              <tr>
+                <td colSpan="5" className="p-4 text-center text-gray-500">
+                  {searchTerm ? 'No matching deals found.' : 'No deals found.'}
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
       {/* Cards for Mobile */}
       <div className="md:hidden space-y-3">
-        {deals.map(d => {
-          const clientName = clients.find(c => String(c.id) === String(d.clientId))?.name || 'Unknown';
+        {filteredDeals.map(d => {
+          const clientName =
+            clients.find(c => String(c.id) === String(d.clientId))?.name || 'Unknown';
+
           return (
-            <div key={d.id} className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-2">
+            <div
+              key={d.id}
+              className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col gap-2"
+            >
               <div className="flex justify-between items-start">
                 <div>
                   <h3 className="font-bold text-gray-800">{d.title}</h3>
                   <p className="text-sm text-gray-500">{clientName}</p>
                 </div>
-                <button onClick={() => handleDelete(d.id)} className="text-red-500 bg-red-50 p-2 rounded-lg"><Trash2 size={18} /></button>
+
+                <button
+                  onClick={() => handleDelete(d.id)}
+                  className="text-red-500 bg-red-50 p-2 rounded-lg"
+                >
+                  <Trash2 size={18} />
+                </button>
               </div>
+
               <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
                 <span className="font-bold text-green-600">${d.value}</span>
-                <span className="bg-gray-100 px-2 py-1 rounded text-xs font-medium">{d.paymentMethod || 'N/A'}</span>
+                <span className="bg-gray-100 px-2 py-1 rounded text-xs font-medium">
+                  {d.paymentMethod || 'N/A'}
+                </span>
               </div>
             </div>
           );
         })}
-        {deals.length === 0 && <p className="text-center text-gray-500 py-4">No deals found.</p>}
+
+        {filteredDeals.length === 0 && (
+          <p className="text-center text-gray-500 py-4">
+            {searchTerm ? 'No matching deals found.' : 'No deals found.'}
+          </p>
+        )}
       </div>
+
     </div>
   );
 };
+
 export default Deals;
