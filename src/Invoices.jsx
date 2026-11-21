@@ -13,14 +13,11 @@ const Invoices = () => {
   const [invoices, setInvoices] = useState([]);
   const [clients, setClients] = useState([]);
   const [isMigrating, setIsMigrating] = useState(false);
-  const [userId, setUserId] = useState(null);
 
   useEffect(() => { 
     const auth = getAuth();
     const user = auth.currentUser;
     if (!user) return;
-
-    setUserId(user.uid);
 
     let unsubscribeInvoices;
     let unsubscribeClients;
@@ -93,97 +90,98 @@ const Invoices = () => {
       let company = null;
       let savedPayment = null;
 
+      // ========== ALWAYS FETCH FROM FIREBASE ==========
       try {
         const auth = getAuth();
         const user = auth.currentUser;
-        
-        if (isProUser && user) {
+
+        if (user) {
+          // Profile
           const companyRef = doc(firestore, "settings", user.uid);
           const companySnap = await getDoc(companyRef);
-          if (companySnap.exists()) company = companySnap.data();
+          if (companySnap.exists()) {
+            company = companySnap.data();
+          }
 
+          // Payment
           const paymentRef = doc(firestore, "payment_details", user.uid);
           const paymentSnap = await getDoc(paymentRef);
-          if (paymentSnap.exists()) savedPayment = paymentSnap.data();
-        } 
-        
-        if (!savedPayment) {
-          const localPayment = await db.payment_details.get('main_payment'); 
-          if (localPayment) {
-            const { id, ...rest } = localPayment;
-            savedPayment = rest;
-          }
-        }
-        
-        if (!company) {
-          const localCompany = await db.settings.get('company_profile');
-          if (localCompany) {
-            const { id, ...rest } = localCompany;
-            company = rest;
+          if (paymentSnap.exists()) {
+            savedPayment = paymentSnap.data();
           }
         }
       } catch (err) {
-        console.log("PDF Fetch Error:", err);
+        console.log("Firebase fetch error:", err);
       }
+      // ================================================
+
+      const docPDF = new jsPDF();
       
-      const doc = new jsPDF();
-      
-      doc.setFillColor(37, 99, 235); 
-      doc.rect(0, 0, 210, 8, 'F'); 
+      // Blue top bar
+      docPDF.setFillColor(37, 99, 235); 
+      docPDF.rect(0, 0, 210, 8, 'F'); 
       
       let yPos = 25;
-      if (company && company.logo) {
+      if (company?.logo) {
         try {
-          doc.addImage(company.logo, 'PNG', 15, 15, 25, 25); 
+          docPDF.addImage(company.logo, 'PNG', 15, 15, 25, 25); 
           yPos = 50; 
-        } catch (imgError) {
-          console.log("Logo format issue.");
+        } catch (e) {
+          try {
+            docPDF.addImage(company.logo, 'JPEG', 15, 15, 25, 25);
+            yPos = 50;
+          } catch (err) {}
         }
       }
 
-      doc.setFontSize(24);
-      doc.setTextColor(30, 41, 59); 
-      doc.setFont("helvetica", "bold");
-      doc.text(company?.businessName || "DealFlow", 15, yPos);
+      // Company Name
+      docPDF.setFontSize(24);
+      docPDF.setTextColor(30, 41, 59); 
+      docPDF.setFont("helvetica", "bold");
+      docPDF.text(company?.businessName || "DealFlow", 15, yPos);
       
-      doc.setFontSize(10);
-      doc.setTextColor(100);
-      doc.setFont("helvetica", "normal");
-      doc.text(company?.email || "support@dealflow.com", 15, yPos + 7);
+      docPDF.setFontSize(10);
+      docPDF.setTextColor(100);
+      docPDF.setFont("helvetica", "normal");
+      docPDF.text(company?.email || "support@dealflow.com", 15, yPos + 7);
 
-      doc.setFontSize(30);
-      doc.setTextColor(226, 232, 240); 
-      doc.setFont("helvetica", "bold");
-      doc.text("INVOICE", 195, 30, { align: "right" });
+      // INVOICE title
+      docPDF.setFontSize(30);
+      docPDF.setTextColor(226, 232, 240); 
+      docPDF.setFont("helvetica", "bold");
+      docPDF.text("INVOICE", 195, 30, { align: "right" });
 
-      doc.setFontSize(12);
-      doc.setTextColor(37, 99, 235); 
-      doc.text("Billed To:", 15, yPos + 30);
+      // Billed To
+      docPDF.setFontSize(12);
+      docPDF.setTextColor(37, 99, 235); 
+      docPDF.text("Billed To:", 15, yPos + 30);
       
-      doc.setFontSize(11);
-      doc.setTextColor(50);
-      doc.setFont("helvetica", "bold");
-      doc.text(client?.name || 'Unknown Client', 15, yPos + 38);
+      docPDF.setFontSize(11);
+      docPDF.setTextColor(50);
+      docPDF.setFont("helvetica", "bold");
+      docPDF.text(client?.name || 'Unknown Client', 15, yPos + 38);
       
-      doc.setFont("helvetica", "normal");
-      doc.text(client?.company || 'N/A', 15, yPos + 44);
-      doc.text(client?.email || 'N/A', 15, yPos + 50);
+      docPDF.setFont("helvetica", "normal");
+      docPDF.text(client?.company || 'N/A', 15, yPos + 44);
+      docPDF.text(client?.email || 'N/A', 15, yPos + 50);
 
-      doc.setFontSize(12);
-      doc.setTextColor(37, 99, 235);
-      doc.text("Invoice Details:", 120, yPos + 30);
+      // Invoice Details
+      docPDF.setFontSize(12);
+      docPDF.setTextColor(37, 99, 235);
+      docPDF.text("Invoice Details:", 120, yPos + 30);
       
-      doc.setFontSize(11);
-      doc.setTextColor(50);
-      doc.text(`Invoice No:`, 120, yPos + 38);
-      doc.text(`Date:`, 120, yPos + 44);
+      docPDF.setFontSize(11);
+      docPDF.setTextColor(50);
+      docPDF.text(`Invoice No:`, 120, yPos + 38);
+      docPDF.text(`Date:`, 120, yPos + 44);
       
-      doc.setFont("helvetica", "bold");
+      docPDF.setFont("helvetica", "bold");
       const displayId = String(invoice.id).substring(0, 6).toUpperCase();
-      doc.text(`#INV-${displayId}`, 160, yPos + 38);
-      doc.text(`${invoice.date}`, 160, yPos + 44);
+      docPDF.text(`#INV-${displayId}`, 160, yPos + 38);
+      docPDF.text(`${invoice.date || new Date().toLocaleDateString()}`, 160, yPos + 44);
 
-      autoTable(doc, {
+      // Table
+      autoTable(docPDF, {
         startY: yPos + 65, 
         margin: { left: 15, right: 15 },
         head: [['Description', 'Amount']],
@@ -200,82 +198,87 @@ const Invoices = () => {
         styles: { fontSize: 11, cellPadding: 6, textColor: [50, 50, 50] },
       });
 
-      let finalY = doc.lastAutoTable ? doc.lastAutoTable.finalY + 15 : yPos + 100;
+      let finalY = docPDF.lastAutoTable ? docPDF.lastAutoTable.finalY + 15 : yPos + 100;
       
-      doc.setFillColor(248, 250, 252); 
-      doc.rect(120, finalY, 75, 20, 'F');
+      // Total Box
+      docPDF.setFillColor(248, 250, 252); 
+      docPDF.rect(120, finalY, 75, 20, 'F');
       
-      doc.setFontSize(12);
-      doc.setTextColor(100);
-      doc.text("Total:", 125, finalY + 13);
+      docPDF.setFontSize(12);
+      docPDF.setTextColor(100);
+      docPDF.text("Total:", 125, finalY + 13);
       
-      doc.setFontSize(14);
-      doc.setTextColor(37, 99, 235); 
-      doc.setFont("helvetica", "bold");
-      doc.text(`$${Number(invoice.amount).toLocaleString()}`, 190, finalY + 13, { align: "right" });
+      docPDF.setFontSize(14);
+      docPDF.setTextColor(37, 99, 235); 
+      docPDF.setFont("helvetica", "bold");
+      docPDF.text(`$${Number(invoice.amount).toLocaleString()}`, 190, finalY + 13, { align: "right" });
 
       let currentY = finalY + 35; 
 
-      if (savedPayment && invoice.paymentMethod) {
-        doc.setFillColor(255, 255, 255);
-        doc.setDrawColor(226, 232, 240);
-        doc.roundedRect(15, currentY, 180, 25, 3, 3, 'FD'); 
-        
-        doc.setFontSize(9); 
-        doc.setTextColor(148, 163, 184); 
-        doc.setFont("helvetica", "bold");
-        doc.text("PAYMENT DETAILS", 20, currentY + 8);
-        
-        doc.setFontSize(10); 
-        doc.setFont("helvetica", "normal");
-        doc.setTextColor(51, 65, 85); 
-        
-        let paymentText = `Method: ${invoice.paymentMethod}`;
-        
-        if (invoice.paymentMethod.includes('PayPal')) paymentText += ` | Account: ${savedPayment.paypalUSD || 'N/A'}`;
-        if (invoice.paymentMethod.includes('Bank Transfer')) paymentText += ` | Details: ${savedPayment.bankDetails || 'N/A'}`;
-        if (invoice.paymentMethod.includes('Zelle')) paymentText += ` | Details: ${savedPayment.zelleDetails || 'N/A'}`;
-        if (invoice.paymentMethod.includes('Wise')) paymentText += ` | Details: ${savedPayment.wiseDetails || 'N/A'}`;
-        if (invoice.paymentMethod.includes('Payoneer')) paymentText += ` | Details: ${savedPayment.payoneerDetails || 'N/A'}`;
-        if (invoice.paymentMethod.includes('Credit Card')) paymentText += ` | Card: ****${savedPayment.cardNumber?.slice(-4) || 'N/A'}`;
-        
-        if (invoice.paymentMethod.includes('USDT')) {
-          const network = invoice.paymentMethod.split('(')[1]?.replace(')', '');
-          let addr = savedPayment.usdtTrc20;
-          if (network === 'BEP20') addr = savedPayment.usdtBep20;
-          if (network === 'ERC20') addr = savedPayment.usdtErc20;
-          paymentText += ` | Address: ${addr || 'N/A'}`;
-        }
-        if (invoice.paymentMethod.includes('Bitcoin')) paymentText += ` | Address: ${savedPayment.btcAddress || 'N/A'}`;
-        if (invoice.paymentMethod.includes('Other')) paymentText += ` | Details: ${savedPayment.bankDetails || 'N/A'}`;
+      // ========== PAYMENT DETAILS (Always show) ==========
+      const method = invoice.paymentMethod || '';
+      
+      docPDF.setFillColor(255, 255, 255);
+      docPDF.setDrawColor(226, 232, 240);
+      docPDF.roundedRect(15, currentY, 180, 34, 3, 3, 'FD'); 
+      
+      docPDF.setFontSize(9); 
+      docPDF.setTextColor(148, 163, 184); 
+      docPDF.setFont("helvetica", "bold");
+      docPDF.text("PAYMENT DETAILS", 20, currentY + 8);
+      
+      docPDF.setFontSize(10); 
+      docPDF.setFont("helvetica", "normal");
+      docPDF.setTextColor(51, 65, 85); 
+      
+      let paymentText = method ? `Method: ${method}` : 'Method: Not specified on this invoice';
 
-        const splitText = doc.splitTextToSize(paymentText, 160);
-        doc.text(splitText, 20, currentY + 16);
-        
-        currentY += 35; 
+      if (savedPayment) {
+        const m = (method || '').toLowerCase();
+
+        if (m.includes('paypal')) {
+          paymentText += `\nAccount: ${savedPayment.paypalUSD || savedPayment.paypal || 'N/A'}`;
+        } else if (m.includes('bank')) {
+          paymentText += `\nDetails: ${savedPayment.bankDetails || 'N/A'}`;
+        } else if (m.includes('zelle')) {
+          paymentText += `\nDetails: ${savedPayment.zelleDetails || 'N/A'}`;
+        } else if (m.includes('wise')) {
+          paymentText += `\nDetails: ${savedPayment.wiseDetails || 'N/A'}`;
+        } else if (m.includes('payoneer')) {
+          paymentText += `\nDetails: ${savedPayment.payoneerDetails || 'N/A'}`;
+        } else if (m.includes('card') || m.includes('credit') || m.includes('debit')) {
+          paymentText += `\nCard: ****${savedPayment.cardNumber?.slice(-4) || 'N/A'}`;
+        } else if (m.includes('usdt')) {
+          let network = 'TRC20';
+          let addr = savedPayment.usdtTrc20;
+          if (m.includes('bep20')) { network = 'BEP20'; addr = savedPayment.usdtBep20; }
+          if (m.includes('erc20')) { network = 'ERC20'; addr = savedPayment.usdtErc20; }
+          paymentText += `\nAddress (${network}): ${addr || 'N/A'}`;
+        } else if (m.includes('bitcoin') || m.includes('btc')) {
+          paymentText += `\nAddress: ${savedPayment.btcAddress || 'N/A'}`;
+        } else {
+          if (savedPayment.paypalUSD) paymentText += `\nPayPal: ${savedPayment.paypalUSD}`;
+          else if (savedPayment.bankDetails) paymentText += `\nBank: ${savedPayment.bankDetails}`;
+          else if (savedPayment.zelleDetails) paymentText += `\nZelle: ${savedPayment.zelleDetails}`;
+          else paymentText += `\n(Details available in settings)`;
+        }
       } else {
-        doc.setFillColor(254, 242, 242); 
-        doc.setDrawColor(252, 165, 165); 
-        doc.roundedRect(15, currentY, 180, 25, 3, 3, 'FD'); 
-        
-        doc.setFontSize(10); 
-        doc.setTextColor(220, 38, 38); 
-        doc.setFont("helvetica", "bold");
-        doc.text("PAYMENT DETAILS MISSING", 20, currentY + 10);
-        
-        doc.setFontSize(9); 
-        doc.setFont("helvetica", "normal");
-        doc.text("Please go to Settings > Payment Accounts and save your details before generating an invoice.", 20, currentY + 18);
-        
-        currentY += 35;
+        paymentText += `\n(No payment account found in Firebase)`;
       }
 
-      doc.setFontSize(10);
-      doc.setTextColor(150);
-      doc.setFont("helvetica", "italic");
-      doc.text("Thank you for your business!", 105, currentY + 10, { align: "center" });
+      const splitText = docPDF.splitTextToSize(paymentText, 160);
+      docPDF.text(splitText, 20, currentY + 16);
+      
+      currentY += 45;
+      // ==================================================
 
-      doc.save(`Invoice_${displayId}.pdf`);
+      // Footer
+      docPDF.setFontSize(10);
+      docPDF.setTextColor(150);
+      docPDF.setFont("helvetica", "italic");
+      docPDF.text("Thank you for your business!", 105, currentY + 5, { align: "center" });
+
+      docPDF.save(`Invoice_${displayId}.pdf`);
       
     } catch (error) {
       console.error("PDF Error: ", error);

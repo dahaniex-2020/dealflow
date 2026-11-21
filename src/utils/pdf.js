@@ -1,64 +1,41 @@
 import { jsPDF } from 'jspdf';
 import { autoTable } from 'jspdf-autotable';
-import { db } from '../db/schema';
 import { db as firestore } from '../firebase'; 
 import { doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
-const getFirebaseProfileAndPayment = async () => {
-  let profile = { 
-    name: 'Freelancer', 
-    email: 'email@example.com', 
-    businessName: 'My Business', 
-    logo: null 
-  };
-  let payment = null;
-
-  try {
-    const auth = getAuth();
-    const user = auth.currentUser;
-
-    if (!user) {
-      console.log("User not logged in");
-      return { profile, payment };
-    }
-
-    // 1. Profile (settings)
-    const profileRef = doc(firestore, "settings", user.uid);
-    const profileSnap = await getDoc(profileRef);
-    
-    if (profileSnap.exists()) {
-      profile = profileSnap.data();
-      console.log("✅ Profile found from Firebase:", profile);
-    } else {
-      console.log("❌ Profile not found in Firebase");
-    }
-
-    // 2. Payment Details
-    const payRef = doc(firestore, "payment_details", user.uid);
-    const paySnap = await getDoc(payRef);
-    
-    if (paySnap.exists()) {
-      payment = paySnap.data();
-      console.log("✅ Payment found from Firebase:", payment);
-    } else {
-      console.log("❌ Payment details not found in Firebase");
-    }
-
-  } catch (err) {
-    console.error("Firebase fetch error:", err);
-  }
-
-  return { profile, payment };
-};
 const getSymbol = (curr) => {
   const symbols = { PKR: 'Rs', USD: '$', GBP: '£', EUR: '€', CAD: 'C$', AUD: 'A$', AED: 'AED', SAR: 'SAR', INR: '₹' };
   return symbols[curr] || curr;
 };
 
+const getFirebaseProfileAndPayment = async () => {
+  let profile = { name: 'Freelancer', email: 'email@example.com', businessName: 'My Business', logo: null };
+  let payment = null;
+
+  try {
+    const auth = getAuth();
+    const user = auth.currentUser;
+    if (!user) return { profile, payment };
+
+    const profileRef = doc(firestore, "settings", user.uid);
+    const profileSnap = await getDoc(profileRef);
+    if (profileSnap.exists()) profile = profileSnap.data();
+
+    const payRef = doc(firestore, "payment_details", user.uid);
+    const paySnap = await getDoc(payRef);
+    if (paySnap.exists()) payment = paySnap.data();
+
+  } catch (err) {
+    console.log("Firebase fetch error:", err);
+  }
+
+  return { profile, payment };
+};
+
 export const generateInvoice = async (deal, client, amount) => {
   try {
-    const { profile, payment } = await getSmartProfileAndPayment();
+    const { profile, payment } = await getFirebaseProfileAndPayment();
     
     const doc = new jsPDF();
     const currencySymbol = getSymbol(deal.currency || 'USD');
@@ -167,6 +144,11 @@ export const generateInvoice = async (deal, client, amount) => {
       }
       else if (method.includes('Bitcoin')) paymentDetailText = `BTC Address: ${payment.btcAddress || 'N/A'}`;
       else if (method.includes('Other')) paymentDetailText = `Details: ${payment.bankDetails || 'N/A'}`;
+      else {
+        // Fallback
+        if (payment.paypalUSD) paymentDetailText = `PayPal: ${payment.paypalUSD}`;
+        else if (payment.bankDetails) paymentDetailText = `Bank: ${payment.bankDetails}`;
+      }
     }
 
     if (paymentDetailText) {
@@ -216,7 +198,7 @@ export const generateInvoice = async (deal, client, amount) => {
 
 export const generateProposal = async (clientName, projectTitle, details, amount, currency = 'USD', paymentMethod = '') => {
   try {
-    const { profile, payment } = await getSmartProfileAndPayment();
+    const { profile, payment } = await getFirebaseProfileAndPayment();
     
     const doc = new jsPDF();
     const currencySymbol = getSymbol(currency);
