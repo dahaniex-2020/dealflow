@@ -5,53 +5,52 @@ import { db as firestore } from '../firebase';
 import { doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
-const getSmartProfileAndPayment = async () => {
-  let profile = { name: 'Freelancer', email: 'email@example.com', businessName: 'My Business', logo: null };
+const getFirebaseProfileAndPayment = async () => {
+  let profile = { 
+    name: 'Freelancer', 
+    email: 'email@example.com', 
+    businessName: 'My Business', 
+    logo: null 
+  };
   let payment = null;
 
   try {
     const auth = getAuth();
     const user = auth.currentUser;
 
-    // 👇 Pehle Cloud (Firebase) se data check karein (Pro users ke liye)
-    if (user) {
-      const profileRef = doc(firestore, "settings", user.uid);
-      const profileSnap = await getDoc(profileRef);
-      if (profileSnap.exists()) {
-        profile = profileSnap.data();
-      }
-
-      const payRef = doc(firestore, "payment_details", user.uid);
-      const paySnap = await getDoc(payRef);
-      if (paySnap.exists()) {
-        payment = paySnap.data();
-      }
+    if (!user) {
+      console.log("User not logged in");
+      return { profile, payment };
     }
 
-    // 👇 Agar Cloud mein na mile, toh Local se uthayen
-    if (!payment) {
-      const savedPayment = await db.payment_details.get('main_payment');
-      if (savedPayment) {
-        const { id, ...rest } = savedPayment;
-        payment = rest;
-      }
-    }
+    // 1. Profile (settings)
+    const profileRef = doc(firestore, "settings", user.uid);
+    const profileSnap = await getDoc(profileRef);
     
-    if (!profile || !profile.businessName) {
-      const savedProfile = await db.settings.get('company_profile');
-      if (savedProfile) {
-        const { id, ...rest } = savedProfile;
-        profile = { ...profile, ...rest };
-      }
+    if (profileSnap.exists()) {
+      profile = profileSnap.data();
+      console.log("✅ Profile found from Firebase:", profile);
+    } else {
+      console.log("❌ Profile not found in Firebase");
+    }
+
+    // 2. Payment Details
+    const payRef = doc(firestore, "payment_details", user.uid);
+    const paySnap = await getDoc(payRef);
+    
+    if (paySnap.exists()) {
+      payment = paySnap.data();
+      console.log("✅ Payment found from Firebase:", payment);
+    } else {
+      console.log("❌ Payment details not found in Firebase");
     }
 
   } catch (err) {
-    console.log("Error fetching data:", err);
+    console.error("Firebase fetch error:", err);
   }
 
   return { profile, payment };
 };
-
 const getSymbol = (curr) => {
   const symbols = { PKR: 'Rs', USD: '$', GBP: '£', EUR: '€', CAD: 'C$', AUD: 'A$', AED: 'AED', SAR: 'SAR', INR: '₹' };
   return symbols[curr] || curr;
