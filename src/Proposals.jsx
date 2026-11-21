@@ -53,6 +53,7 @@ export default function Proposals() {
     c.symbol.toLowerCase().includes(currencySearch.toLowerCase())
   );
 
+  
   const handleGenerate = async () => {
     if (!clientName || !projectTitle || !amount) {
       alert("Please enter Client Name, Project Title and Amount!");
@@ -72,47 +73,77 @@ export default function Proposals() {
       const user = auth.currentUser;
 
       if (isProUser && user) {
-        const docRef = doc(firestore, "settings", user.uid); 
-        const docSnap = await getDoc(docRef);
-        if (docSnap.exists()) {
-           profile = docSnap.data();
-        }
+        // Fetch existing Settings profile
+        const settingsRef = doc(firestore, "settings", user.uid);
+        const settingsSnap = await getDoc(settingsRef);
+
+        // Fetch payment details separately
+        const paymentRef = doc(firestore, "payment_details", user.uid);
+        const paymentSnap = await getDoc(paymentRef);
+
+        const settingsData = settingsSnap.exists()
+          ? settingsSnap.data()
+          : {};
+
+        const paymentData = paymentSnap.exists()
+          ? paymentSnap.data()
+          : {};
+
+        // Merge both Firebase sources
+        profile = { ...settingsData, ...paymentData };
       } else {
-        const profileData = await db.settings.get('company_profile'); 
-        profile = profileData ? profileData : null;
+        // Existing Local profile support
+        const profileData = await db.settings.get('company_profile');
+        profile = profileData || null;
       }
     } catch (error) {
       console.log("Error fetching profile data:", error);
     }
 
     if (paymentMethod === 'Crypto') {
-      if (!profile || (!profile.usdtTrc20 && !profile.usdtBep20 && !profile.usdtErc20 && !profile.btcAddress)) {
-        alert("❌ Error: You selected Crypto Payment, but your Wallet Address is missing in Settings.\n\nPlease go to Settings > Payment Accounts > Crypto and add your wallet address first.");
+      let selectedWallet = '';
+
+      if (cryptoNetwork === 'USDT (TRC20)') {
+        selectedWallet = profile?.usdtTrc20 || '';
+      } else if (cryptoNetwork === 'USDT (BEP20)') {
+        selectedWallet = profile?.usdtBep20 || '';
+      } else if (cryptoNetwork === 'USDT (ERC20)') {
+        selectedWallet = profile?.usdtErc20 || '';
+      } else if (cryptoNetwork === 'Bitcoin Mainnet') {
+        selectedWallet = profile?.btcAddress || '';
+      }
+
+      if (!selectedWallet.trim()) {
+        alert(
+          "❌ Wallet Address Missing!\n\n" +
+          "Your selected Crypto Network wallet address was not found.\n\n" +
+          "Please add the correct wallet address in Settings > Payment Accounts > Crypto."
+        );
         return;
       }
+
       finalPaymentInfo = cryptoNetwork;
-    } 
-    else if (paymentMethod === 'Other') {
+    } else if (paymentMethod === 'Other') {
       if (!otherPaymentDetails) {
         alert("Please enter details for 'Other' payment method!");
         return;
       }
+
       finalPaymentInfo = `Other: ${otherPaymentDetails}`;
-    } 
-    else {
-      finalPaymentInfo = paymentMethod; 
+    } else {
+      finalPaymentInfo = paymentMethod;
     }
 
-    // 👇 isProUser hata diya gaya hai kyunke utils/pdf.js khud check karega
     generateProposal(
-        clientName, 
-        projectTitle, 
-        details, 
-        amount, 
-        currency, 
-        finalPaymentInfo
+      clientName,
+      projectTitle,
+      details,
+      amount,
+      currency,
+      finalPaymentInfo
     );
   };
+
 
   const getSymbol = (currCode) => {
     const found = currencies.find(c => c.code === currCode);
