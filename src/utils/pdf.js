@@ -1,13 +1,10 @@
 import { jsPDF } from 'jspdf';
-import autoTable from 'jspdf-autotable';
+import { autoTable } from 'jspdf-autotable';
 import { db } from '../db/schema';
-import { db as firestore } from '../firebase';
+import { db as firestore } from '../firebase'; 
 import { doc, getDoc } from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 
-// ==========================================
-// SMART FETCH: Cloud se pehle, phir Local se
-// ==========================================
 const getSmartProfileAndPayment = async () => {
   let profile = { name: 'Freelancer', email: 'email@example.com', businessName: 'My Business', logo: null };
   let payment = null;
@@ -16,7 +13,6 @@ const getSmartProfileAndPayment = async () => {
     const auth = getAuth();
     const user = auth.currentUser;
 
-    // 1. Pehle Cloud (Firebase) se data dhoondein
     if (user) {
       const profileRef = doc(firestore, "settings", user.uid);
       const profileSnap = await getDoc(profileRef);
@@ -27,7 +23,6 @@ const getSmartProfileAndPayment = async () => {
       if (paySnap.exists()) payment = paySnap.data();
     }
 
-    // 2. Agar Cloud mein nahi mila, toh Local se uthayen
     if (!payment) {
       const savedPayment = await db.payment_details.get('main_payment');
       if (savedPayment) {
@@ -52,32 +47,19 @@ const getSmartProfileAndPayment = async () => {
 };
 
 const getSymbol = (curr) => {
-  const symbols = { 
-    PKR: 'Rs', USD: '$', GBP: '£', EUR: '€', 
-    CAD: 'C\( ', AUD: 'A \)', AED: 'AED', SAR: 'SAR', INR: '₹' 
-  };
+  const symbols = { PKR: 'Rs', USD: '$', GBP: '£', EUR: '€', CAD: 'C$', AUD: 'A$', AED: 'AED', SAR: 'SAR', INR: '₹' };
   return symbols[curr] || curr;
 };
 
-// ==========================================
-// 1. INVOICE PDF GENERATOR
-// ==========================================
 export const generateInvoice = async (deal, client, amount) => {
   try {
     const { profile, payment } = await getSmartProfileAndPayment();
     
     const doc = new jsPDF();
-    const currencySymbol = getSymbol(deal?.currency || 'USD');
+    const currencySymbol = getSymbol(deal.currency || 'USD');
     
-    // 1. PREMIUM HEADER
     if (profile.logo) { 
-      try { 
-        doc.addImage(profile.logo, 'PNG', 14, 14, 24, 24); 
-      } catch (e) {
-        try { 
-          doc.addImage(profile.logo, 'JPEG', 14, 14, 24, 24); 
-        } catch (e2) {}
-      }
+      try { doc.addImage(profile.logo, 'PNG', 14, 14, 24, 24); } catch (e) {} 
     }
 
     const headerX = profile.logo ? 44 : 14;
@@ -98,7 +80,7 @@ export const generateInvoice = async (deal, client, amount) => {
     doc.setFont("helvetica", "bold");
     doc.text("INVOICE", 196, 24, { align: 'right' });
 
-    const displayId = String(deal?.id || Date.now()).substring(0, 6).toUpperCase();
+    const displayId = String(deal.id).substring(0, 6).toUpperCase();
     doc.setFontSize(9);
     doc.setTextColor(100);
     doc.setFont("helvetica", "normal");
@@ -109,7 +91,6 @@ export const generateInvoice = async (deal, client, amount) => {
     doc.setLineWidth(0.5);
     doc.line(14, 55, 196, 55);
 
-    // 2. BILLED TO
     doc.setFontSize(9);
     doc.setTextColor(148, 163, 184);
     doc.setFont("helvetica", "bold");
@@ -117,26 +98,22 @@ export const generateInvoice = async (deal, client, amount) => {
 
     doc.setFontSize(12);
     doc.setTextColor(30, 41, 59); 
-    doc.text(client?.name || "Unknown Client", 14, 72);
+    doc.text(client ? client.name : "Unknown Client", 14, 72);
     
     doc.setFontSize(9);
     doc.setTextColor(100);
     doc.setFont("helvetica", "normal");
     let clientY = 77;
-    if (client?.email) { 
-      doc.text(client.email, 14, clientY); 
-      clientY += 5; 
-    }
+    if (client && client.email) { doc.text(client.email, 14, clientY); clientY += 5; }
 
-    // 3. TABLE
-    const subTotal = Number(amount) || 0;
-    const taxPercent = Number(deal?.tax) || 0;
-    const discountPercent = Number(deal?.discount) || 0;
+    const subTotal = Number(amount);
+    const taxPercent = Number(deal.tax) || 0;
+    const discountPercent = Number(deal.discount) || 0;
     const taxAmount = (subTotal * taxPercent) / 100;
     const discountAmount = (subTotal * discountPercent) / 100;
     const grandTotal = subTotal + taxAmount - discountAmount;
 
-    const tableRows = [[deal?.title || 'Service', `${currencySymbol} ${subTotal.toFixed(2)}`]];
+    const tableRows = [[deal.title, `${currencySymbol} ${subTotal.toFixed(2)}`]];
     if (taxAmount > 0) tableRows.push([`Tax (${taxPercent}%)`, `+ ${currencySymbol} ${taxAmount.toFixed(2)}`]);
     if (discountAmount > 0) tableRows.push([`Discount (${discountPercent}%)`, `- ${currencySymbol} ${discountAmount.toFixed(2)}`]);
 
@@ -150,8 +127,7 @@ export const generateInvoice = async (deal, client, amount) => {
       columnStyles: { 1: { halign: 'right' } }
     });
 
-    // 4. GRAND TOTAL
-    const finalY = doc.lastAutoTable?.finalY || 120;
+    const finalY = doc.lastAutoTable.finalY || 120;
     
     doc.setFillColor(248, 250, 252);
     doc.roundedRect(120, finalY + 10, 76, 22, 3, 3, 'F');
@@ -166,65 +142,58 @@ export const generateInvoice = async (deal, client, amount) => {
     doc.setFont("helvetica", "bold");
     doc.text(`${currencySymbol} ${grandTotal.toFixed(2)}`, 191, finalY + 26, { align: 'right' });
 
-    // 5. PAYMENT DETAILS (Always shows)
     let currentY = finalY + 45;
-    let method = deal?.paymentMethod || 'Not Specified';
-    let paymentDetailText = `Method: ${method}`;
+    let paymentDetailText = '';
+    let method = deal.paymentMethod || '';
 
     if (payment) {
-      const m = method.toLowerCase();
-
-      if (m.includes('paypal')) {
-        paymentDetailText += `\nPayPal: ${payment.paypalUSD || payment.paypal || 'N/A'}`;
-      } 
-      else if (m.includes('bank')) {
-        paymentDetailText += `\nBank Details: ${payment.bankDetails || 'N/A'}`;
-      } 
-      else if (m.includes('zelle')) {
-        paymentDetailText += `\nZelle: ${payment.zelleDetails || 'N/A'}`;
-      } 
-      else if (m.includes('wise')) {
-        paymentDetailText += `\nWise: ${payment.wiseDetails || 'N/A'}`;
-      } 
-      else if (m.includes('payoneer')) {
-        paymentDetailText += `\nPayoneer: ${payment.payoneerDetails || 'N/A'}`;
-      } 
-      else if (m.includes('card') || m.includes('credit') || m.includes('debit')) {
-        paymentDetailText += `\nCard: ****${payment.cardNumber?.slice(-4) || 'N/A'}`;
-      } 
-      else if (m.includes('usdt')) {
-        let network = 'TRC20';
+      if (method.includes('PayPal')) paymentDetailText = `PayPal: ${payment.paypalUSD || 'N/A'}`;
+      else if (method.includes('Bank Transfer')) paymentDetailText = `Bank: ${payment.bankDetails || 'N/A'}`;
+      else if (method.includes('Zelle')) paymentDetailText = `Zelle: ${payment.zelleDetails || 'N/A'}`;
+      else if (method.includes('Wise')) paymentDetailText = `Wise: ${payment.wiseDetails || 'N/A'}`;
+      else if (method.includes('Payoneer')) paymentDetailText = `Payoneer: ${payment.payoneerDetails || 'N/A'}`;
+      else if (method.includes('Credit Card')) paymentDetailText = `Card: ****${payment.cardNumber?.slice(-4) || 'N/A'}`;
+      else if (method.includes('USDT')) {
+        const network = method.split('(')[1]?.replace(')', '');
         let addr = payment.usdtTrc20;
-        if (m.includes('bep20')) { network = 'BEP20'; addr = payment.usdtBep20; }
-        if (m.includes('erc20')) { network = 'ERC20'; addr = payment.usdtErc20; }
-        paymentDetailText += `\nUSDT (${network}): ${addr || 'N/A'}`;
-      } 
-      else if (m.includes('bitcoin') || m.includes('btc')) {
-        paymentDetailText += `\nBTC Address: ${payment.btcAddress || 'N/A'}`;
-      } 
-      else {
-        paymentDetailText += `\nDetails: ${payment.bankDetails || payment.otherDetails || 'N/A'}`;
+        if (network === 'BEP20') addr = payment.usdtBep20;
+        if (network === 'ERC20') addr = payment.usdtErc20;
+        paymentDetailText = `USDT (${network}): ${addr || 'N/A'}`;
       }
+      else if (method.includes('Bitcoin')) paymentDetailText = `BTC Address: ${payment.btcAddress || 'N/A'}`;
+      else if (method.includes('Other')) paymentDetailText = `Details: ${payment.bankDetails || 'N/A'}`;
     }
 
-    // Payment box always show
-    doc.setDrawColor(226, 232, 240); 
-    doc.setFillColor(255, 255, 255);
-    doc.roundedRect(14, currentY, 182, 34, 3, 3, 'FD');
+    if (paymentDetailText) {
+      doc.setDrawColor(226, 232, 240); 
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(14, currentY, 182, 24, 3, 3, 'FD'); 
+      
+      doc.setFontSize(9); 
+      doc.setTextColor(148, 163, 184); 
+      doc.setFont("helvetica", "bold");
+      doc.text("PAYMENT DETAILS", 18, currentY + 7);
+      
+      doc.setFontSize(10); 
+      doc.setFont("helvetica", "normal");
+      doc.setTextColor(51, 65, 85); 
+      const splitText = doc.splitTextToSize(paymentDetailText, 170);
+      doc.text(splitText, 18, currentY + 15);
+    } else {
+      doc.setFillColor(254, 242, 242); 
+      doc.setDrawColor(252, 165, 165);
+      doc.roundedRect(14, currentY, 182, 24, 3, 3, 'FD'); 
+      
+      doc.setFontSize(9); 
+      doc.setTextColor(220, 38, 38); 
+      doc.setFont("helvetica", "bold");
+      doc.text("PAYMENT DETAILS MISSING", 18, currentY + 7);
+      
+      doc.setFontSize(9); 
+      doc.setFont("helvetica", "normal");
+      doc.text("Please go to Settings > Payment Accounts and save details.", 18, currentY + 15);
+    }
 
-    doc.setFontSize(9); 
-    doc.setTextColor(148, 163, 184); 
-    doc.setFont("helvetica", "bold");
-    doc.text("PAYMENT DETAILS", 18, currentY + 8);
-
-    doc.setFontSize(10); 
-    doc.setFont("helvetica", "normal");
-    doc.setTextColor(51, 65, 85); 
-
-    const splitText = doc.splitTextToSize(paymentDetailText, 170);
-    doc.text(splitText, 18, currentY + 16);
-
-    // 6. FOOTER
     doc.setFontSize(8);
     doc.setTextColor(148, 163, 184); 
     doc.setFont("helvetica", "italic");
@@ -236,14 +205,10 @@ export const generateInvoice = async (deal, client, amount) => {
     doc.save(`Invoice_${displayId}.pdf`);
 
   } catch (error) { 
-    console.error(error);
     alert("PDF Error: " + error.message); 
   }
 };
 
-// ==========================================
-// 2. PROPOSAL PDF GENERATOR
-// ==========================================
 export const generateProposal = async (clientName, projectTitle, details, amount, currency = 'USD', paymentMethod = '') => {
   try {
     const { profile, payment } = await getSmartProfileAndPayment();
@@ -256,15 +221,7 @@ export const generateProposal = async (clientName, projectTitle, details, amount
 
     let yPos = 25;
     if (profile.logo) { 
-      try { 
-        doc.addImage(profile.logo, 'PNG', 15, 15, 25, 25); 
-        yPos = 50; 
-      } catch (e) {
-        try { 
-          doc.addImage(profile.logo, 'JPEG', 15, 15, 25, 25); 
-          yPos = 50; 
-        } catch (e2) {}
-      }
+      try { doc.addImage(profile.logo, 'PNG', 15, 15, 25, 25); yPos = 50; } catch (e) {} 
     }
 
     doc.setFontSize(24); 
@@ -303,7 +260,7 @@ export const generateProposal = async (clientName, projectTitle, details, amount
     doc.setFontSize(16);
     doc.setTextColor(30, 41, 59);
     doc.setFont("helvetica", "bold");
-    doc.text(`Project: ${projectTitle || 'Untitled Project'}`, 15, yPos + 55);
+    doc.text(`Project: ${projectTitle}`, 15, yPos + 55);
 
     doc.setFontSize(10);
     doc.setTextColor(148, 163, 184); 
@@ -329,15 +286,14 @@ export const generateProposal = async (clientName, projectTitle, details, amount
     doc.setFontSize(16);
     doc.setTextColor(37, 99, 235); 
     doc.setFont("helvetica", "bold");
-    doc.text(`${currencySymbol} ${Number(amount || 0).toFixed(2)}`, 191, finalY + 17, { align: 'right' });
+    doc.text(`${currencySymbol} ${amount}`, 191, finalY + 17, { align: 'right' });
 
     let currentY = finalY + 35;
     
-    // Payment Method (always show if provided)
     if (paymentMethod) {
       doc.setDrawColor(226, 232, 240); 
       doc.setFillColor(255, 255, 255);
-      doc.roundedRect(15, currentY, 181, 32, 3, 3, 'FD'); 
+      doc.roundedRect(15, currentY, 181, 25, 3, 3, 'FD'); 
       
       doc.setFontSize(9); 
       doc.setTextColor(148, 163, 184); 
@@ -349,46 +305,29 @@ export const generateProposal = async (clientName, projectTitle, details, amount
       doc.setTextColor(51, 65, 85); 
 
       let paymentText = `Method: ${paymentMethod}`;
-      const m = paymentMethod.toLowerCase();
 
       if (payment) {
-        if (m.includes('paypal')) {
-          paymentText += `\nAccount: ${payment.paypalUSD || payment.paypal || 'N/A'}`;
-        }
-        else if (m.includes('bank')) {
-          paymentText += `\nDetails: ${payment.bankDetails || 'N/A'}`;
-        }
-        else if (m.includes('zelle')) {
-          paymentText += `\nDetails: ${payment.zelleDetails || 'N/A'}`;
-        }
-        else if (m.includes('wise')) {
-          paymentText += `\nDetails: ${payment.wiseDetails || 'N/A'}`;
-        }
-        else if (m.includes('payoneer')) {
-          paymentText += `\nDetails: ${payment.payoneerDetails || 'N/A'}`;
-        }
-        else if (m.includes('card') || m.includes('credit') || m.includes('debit')) {
-          paymentText += `\nCard: ****${payment.cardNumber?.slice(-4) || 'N/A'}`;
-        }
-        else if (m.includes('usdt')) {
-          let network = 'TRC20';
+        if (paymentMethod.includes('PayPal')) paymentText += ` | Account: ${payment.paypalUSD || 'N/A'}`;
+        else if (paymentMethod.includes('Bank Transfer')) paymentText += ` | Details: ${payment.bankDetails || 'N/A'}`;
+        else if (paymentMethod.includes('Zelle')) paymentText += ` | Details: ${payment.zelleDetails || 'N/A'}`;
+        else if (paymentMethod.includes('Wise')) paymentText += ` | Details: ${payment.wiseDetails || 'N/A'}`;
+        else if (paymentMethod.includes('Payoneer')) paymentText += ` | Details: ${payment.payoneerDetails || 'N/A'}`;
+        else if (paymentMethod.includes('Credit/Debit Card')) paymentText += ` | Card: ****${payment.cardNumber?.slice(-4) || ''}`;
+        else if (paymentMethod.includes('USDT')) {
+          const network = paymentMethod.split('(')[1]?.replace(')', '');
           let addr = payment.usdtTrc20;
-          if (m.includes('bep20')) { network = 'BEP20'; addr = payment.usdtBep20; }
-          if (m.includes('erc20')) { network = 'ERC20'; addr = payment.usdtErc20; }
-          paymentText += `\nAddress (${network}): ${addr || 'N/A'}`;
+          if (network === 'BEP20') addr = payment.usdtBep20;
+          if (network === 'ERC20') addr = payment.usdtErc20;
+          paymentText += ` | Address: ${addr || 'N/A'}`;
         }
-        else if (m.includes('bitcoin') || m.includes('btc')) {
-          paymentText += `\nAddress: ${payment.btcAddress || 'N/A'}`;
-        }
-        else {
-          paymentText += `\nDetails: ${payment.bankDetails || payment.otherDetails || 'N/A'}`;
-        }
+        else if (paymentMethod.includes('Bitcoin')) paymentText += ` | Address: ${payment.btcAddress || 'N/A'}`;
+        else if (paymentMethod.includes('Other')) paymentText += ` | Details: ${payment.bankDetails || 'N/A'}`;
       }
 
       const splitText = doc.splitTextToSize(paymentText, 170);
       doc.text(splitText, 19, currentY + 16);
       
-      currentY += 40;
+      currentY += 35;
     }
 
     doc.setFontSize(9);
@@ -396,11 +335,9 @@ export const generateProposal = async (clientName, projectTitle, details, amount
     doc.setFont("helvetica", "italic");
     doc.text("Thank you for your time. We look forward to working with you!", 105, currentY + 10, { align: 'center' });
 
-    const safeName = (clientName || 'Client').replace(/\s+/g, "_");
-    doc.save(`Proposal_${safeName}.pdf`);
+    doc.save(`Proposal_${clientName.replace(/\s+/g, "_")}.pdf`);
     
   } catch (error) { 
-    console.error(error);
     alert("Error: " + error.message); 
   }
 };
