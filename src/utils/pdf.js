@@ -10,7 +10,8 @@ const getSymbol = (curr) => {
 };
 
 const getFirebaseProfileAndPayment = async () => {
-  let profile = { name: 'Freelancer', email: 'email@example.com', businessName: 'My Business', logo: null };
+  // 🌟 Yahan Default Email Change Kiya Hai
+  let profile = { name: 'Freelancer', email: 'support@dahaniswap.vip', businessName: 'DealFlow', logo: null };
   let payment = null;
 
   try {
@@ -20,7 +21,7 @@ const getFirebaseProfileAndPayment = async () => {
 
     const profileRef = doc(firestore, "settings", user.uid);
     const profileSnap = await getDoc(profileRef);
-    if (profileSnap.exists()) profile = profileSnap.data();
+    if (profileSnap.exists()) profile = { ...profile, ...profileSnap.data() }; // Merge taake default email na ude
 
     const payRef = doc(firestore, "payment_details", user.uid);
     const paySnap = await getDoc(payRef);
@@ -49,12 +50,13 @@ export const generateInvoice = async (deal, client, amount) => {
     doc.setFontSize(20); 
     doc.setTextColor(30, 41, 59);
     doc.setFont("helvetica", "bold");
-    doc.text(profile.businessName || 'My Business', headerX, 24);
+    doc.text(profile.businessName || 'DealFlow', headerX, 24);
     
     doc.setFontSize(9);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100);
-    doc.text(`Email: ${profile.email || ''}`, headerX, 30);
+    // Yahan bhi fallback email lagaya hai
+    doc.text(`Email: ${profile.email || 'support@dahaniswap.vip'}`, headerX, 30);
     if (profile.name) doc.text(profile.name, headerX, 35);
 
     doc.setFontSize(28); 
@@ -145,7 +147,6 @@ export const generateInvoice = async (deal, client, amount) => {
       else if (method.includes('Bitcoin')) paymentDetailText = `BTC Address: ${payment.btcAddress || 'N/A'}`;
       else if (method.includes('Other')) paymentDetailText = `Details: ${payment.bankDetails || 'N/A'}`;
       else {
-        // Fallback
         if (payment.paypalUSD) paymentDetailText = `PayPal: ${payment.paypalUSD}`;
         else if (payment.bankDetails) paymentDetailText = `Bank: ${payment.bankDetails}`;
       }
@@ -187,7 +188,8 @@ export const generateInvoice = async (deal, client, amount) => {
     doc.text("Thank you for your business!", 105, 285, { align: 'center' });
     
     doc.setFont("helvetica", "normal");
-    doc.text(`Questions? Contact us at ${profile.email || ''}`, 105, 290, { align: 'center' });
+    // Yahan fallback email lagaya hai
+    doc.text(`Questions? Contact us at ${profile.email || 'support@dahaniswap.vip'}`, 105, 290, { align: 'center' });
 
     doc.save(`Invoice_${displayId}.pdf`);
 
@@ -214,12 +216,12 @@ export const generateProposal = async (clientName, projectTitle, details, amount
     doc.setFontSize(24); 
     doc.setTextColor(30, 41, 59); 
     doc.setFont("helvetica", "bold");
-    doc.text(profile.businessName || 'My Business', 15, yPos);
+    doc.text(profile.businessName || 'DealFlow', 15, yPos);
     
     doc.setFontSize(10);
     doc.setFont("helvetica", "normal");
     doc.setTextColor(100);
-    doc.text(`Email: ${profile.email || ''}`, 15, yPos + 7);
+    doc.text(`Email: ${profile.email || 'support@dahaniswap.vip'}`, 15, yPos + 7);
 
     doc.setFontSize(30);
     doc.setTextColor(226, 232, 240); 
