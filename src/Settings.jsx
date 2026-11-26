@@ -235,7 +235,7 @@ const Settings = () => {
            <p className="text-sm text-green-600 font-medium">✅ Your account is upgraded. Automatic cloud backup is active.</p>
         ) : (
           <>
-            <p className="text-sm text-gray-500 mb-4">Get automatic cloud backup for just $20/month.</p>
+            <p className="text-sm text-gray-500 mb-4">Get automatic cloud backup for just $20/month. Contact at support@dahaniswap.vip</p>
             <div className="flex flex-col sm:flex-row gap-2">
               <div className="relative flex-1">
                 <span className="absolute left-3 top-3 text-gray-400">🔑</span>
